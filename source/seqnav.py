@@ -14,11 +14,11 @@ class SequentialPerfectMemory:
                 **kwargs):
         self.route_end = len(route_images)
         self.route_images = route_images
-        #
+        # f:
         self.ims = np.array(route_images)
-        self.ref_window = False
-        self.mp = -1
-        #
+        self.ref_window = True
+        self.mp = 0
+        # f:#
         self.deg_range = deg_range
         self.deg_step = degree_shift
         self.degrees = np.arange(*deg_range)
@@ -117,145 +117,182 @@ class SequentialPerfectMemory:
             self.flimit = self.mem_pointer + self.window
 
     # quick positioning
-    def get_quick_location(self,query_img):
-        # if memory pointer for ref window
-        # mw_ims = self.ims*1
-        if self.mp >= 0:
-            # bw_lim,fw_lim = np.clip(np.array([self.mp-10,self.mp+11]),0,len(self.ims))
-            # mw_ims = self.ims[bw_lim:fw_lim,:,:]
-            # print('memory pointer: {}, memory window: {}:{}'.format(self.mp,bw_lim,fw_lim))
-            # print('est location (memory pointer): {}'.format(self.mp))
-            return self.mp
-        # get aprox img location
-        # basic (works only for route imgs)
-        ii = self.ims - query_img
-        ii_dif = np.abs(np.sum(ii,axis=(1,2)))
-        ii_idx = np.where(ii_dif==np.min(ii_dif))[0]
-        # also basic (a bit better, only for query imgs)
-        ii_eq = np.where(ii==0,1,0)
-        ii_zeros = np.sum(ii_eq,axis=(1,2))
-        ii_idz = np.where(ii_zeros==np.max(ii_zeros))[0]
-        if ii_idz.shape[0] == 1:
-            ii_idz = ii_idz[0]
-        else:
-            # TODO 
-            # print('more than one possible id loc')
-            # print(ii_idz)
-            # import pdb; pdb.set_trace()
-            ii_idz = int(np.sum(ii_idz)/len(ii_idz))
-        # print('idx: {}, idz: {}'.format(ii_idx,ii_idz))
-        # plt.plot(ii_dif)
-        # plt.plot(ii_zeros)
-        # plt.show()
-        # import pdb; pdb.set_trace()
-        return ii_idz
+    # def get_quick_location(self,query_img):
+    #     # if memory pointer for ref window
+    #     # mw_ims = self.ims*1
+    #     # if self.mp >= 0:
+    #         # bw_lim,fw_lim = np.clip(np.array([self.mp-10,self.mp+11]),0,len(self.ims))
+    #         # mw_ims = self.ims[bw_lim:fw_lim,:,:]
+    #         # print('memory pointer: {}, memory window: {}:{}'.format(self.mp,bw_lim,fw_lim))
+    #         # print('est location (memory pointer): {}'.format(self.mp))
+    #         # return self.mp
+    #     # get aprox img location
+    #     # basic (works only for route imgs)
+    #     ii = self.ims - query_img
+    #     ii_dif = np.abs(np.sum(ii,axis=(1,2)))
+    #     ii_idx = np.where(ii_dif==np.min(ii_dif))[0]
+    #     # also basic (a bit better, only for query imgs)
+    #     ii_eq = np.where(ii==0,1,0)
+    #     ii_zeros = np.sum(ii_eq,axis=(1,2))
+    #     ii_idz = np.where(ii_zeros==np.max(ii_zeros))[0]
+    #     if ii_idz.shape[0] == 1:
+    #         ii_idz = ii_idz[0]
+    #     else:
+    #         # TODO 
+    #         # print('more than one possible id loc')
+    #         # print(ii_idz)
+    #         # import pdb; pdb.set_trace()
+    #         ii_idz = int(np.sum(ii_idz)/len(ii_idz))
+    #     # print('idx: {}, idz: {}'.format(ii_idx,ii_idz))
+    #     # plt.plot(ii_dif)
+    #     # plt.plot(ii_zeros)
+    #     # plt.show()
+    #     # import pdb; pdb.set_trace()
+    #     import pdb; pdb.set_trace()
+    #     return ii_idz
 
-    # TODO: get best loc from best seq
-    def get_seq_location(self,query_img,n_seq=5):
-        ii = self.ims - query_img
-        ii_dif = np.abs(np.sum(ii,axis=(1,2)))
-        ii_mins = sorted(list(np.argpartition(ii_dif,n_seq)[:n_seq]))
-        import pdb; pdb.set_trace()
-
-    # TODO: check loc for single rot snapshot
-    def get_rot_location(self,query_img):
-        for ri in tqdm(range(360)):
-            qim = rotate(ri,query_img)
-        return 
-
-    # TODO: integrated, slower, but better?
-    def get_intx_location(self,query_img):
-        # merged windows
-        wbl,wfl = 0,11
-        mw_cases = np.zeros(self.ims.shape[0]-wfl)
-        for wi in range(self.ims.shape[0]-wfl):
-            iim = self.ims[wbl+wi:wfl+wi] - query_img
-            iim_merge = np.sum(iim,axis=0)
-            iim_nz = np.where(iim_merge==0,0,1)
-            qim_nz = query_img * iim_nz
-            iim_ox = iim_merge + qim_nz
-            iim_eq = np.where(iim==0,1,0)
-            iim_idz = np.sum(iim_eq)
-            mw_cases[wi] = iim_idz
-            import pdb; pdb.set_trace()
-        mw_idz = np.where(mw_cases==np.max(mw_cases))[0]
-        print('mw idz: {}, window: {}:{}'.format(mw_idz,mw_idz,mw_idz+wfl))
-        import pdb; pdb.set_trace()
-        return mw_idz
+    # # TODO: integrated, slower, but better?
+    # def get_intx_location(self,query_img):
+    #     # merged windows
+    #     wbl,wfl = 0,11
+    #     mw_cases = np.zeros(self.ims.shape[0]-wfl)
+    #     for wi in range(self.ims.shape[0]-wfl):
+    #         iim = self.ims[wbl+wi:wfl+wi] - query_img
+    #         iim_merge = np.sum(iim,axis=0)
+    #         iim_nz = np.where(iim_merge==0,0,1)
+    #         qim_nz = query_img * iim_nz
+    #         iim_ox = iim_merge + qim_nz
+    #         iim_eq = np.where(iim==0,1,0)
+    #         iim_idz = np.sum(iim_eq)
+    #         mw_cases[wi] = iim_idz
+    #         import pdb; pdb.set_trace()
+    #     mw_idz = np.where(mw_cases==np.max(mw_cases))[0]
+    #     print('mw idz: {}, window: {}:{}'.format(mw_idz,mw_idz,mw_idz+wfl))
+    #     import pdb; pdb.set_trace()
+    #     return mw_idz
 
     # get heading
-    def get_pos_heading(self,query_img):
-        # quick location 
-        img_loc = self.get_quick_location(query_img)
-        # reference window
-        ims_rw = self.ims*1
-        if self.ref_window:
-            bw_lim,fw_lim = np.clip(np.array([img_loc-10,img_loc+11]),0,len(self.ims))
-            ims_rw = self.ims[bw_lim:fw_lim,:,:]
-            # print('est loc: {}, ref window: {}:{}'.format(img_loc,bw_lim,fw_lim))
-        # get heading
-        rot_cases = np.zeros(360)
-        rot_ids = []
-        for ri in range(360):
-            iir = ims_rw - rotate(ri,query_img) 
-            iir_eq = np.where(iir==0,1,0) # eq: zeros
-            iir_zeros = np.sum(iir_eq,axis=(1,2)) # count zeros
-            iir_idz = np.where(iir_zeros==np.max(iir_zeros))[0]
-            rot_cases[ri] = np.max(iir_zeros) # best case (from rw)
-            rot_ids.append(iir_idz) # best id (for angle=ri)
-        # best heading
-        heading = np.where(rot_cases==np.max(rot_cases))[0]
-        if heading.shape[0] == 1:
-            heading = heading[0]
-        else:
-            # TODO (usually very close, eg.: 42,43)
-            # print('more than one possible heading')
-            # print(heading)
-            # import pdb; pdb.set_trace()
-            heading = np.min(heading)
-        # best img id, according to best heading
-        heading_id = rot_ids[heading]
-        if heading_id.shape[0] == 1:
-            heading_id = np.arange(bw_lim,fw_lim)[heading_id[0]]
-        else:
-            # TODO
-            # print('more than id for heading')
-            # print(heading_id)
-            # import pdb; pdb.set_trace()
-            heading_id = np.min(heading_id)
-        # update memory pointer
-        if self.mp >= 0:
-            self.mp = heading_id
-        # print('heading: {}, heading id: {}'.format(heading,heading_id))
-        return img_loc,heading,heading_id
+    # def get_pos_heading(self,query_img):
+    #     # quick location 
+    #     img_loc = self.get_quick_location(query_img)
+    #     # reference window
+    #     ims_rw = self.ims*1
+    #     if self.ref_window:
+    #         bw_lim,fw_lim = np.clip(np.array([img_loc-10,img_loc+11]),0,len(self.ims))
+    #         ims_rw = self.ims[bw_lim:fw_lim,:,:]
+    #         # print('est loc: {}, ref window: {}:{}'.format(img_loc,bw_lim,fw_lim))
+    #     # get heading
+    #     rot_cases = np.zeros(360)
+    #     rot_ids = []
+    #     for ri in range(360):
+    #         iir = ims_rw - rotate(ri,query_img) 
+    #         iir_eq = np.where(iir==0,1,0) # eq: zeros
+    #         iir_zeros = np.sum(iir_eq,axis=(1,2)) # count zeros
+    #         iir_idz = np.where(iir_zeros==np.max(iir_zeros))[0]
+    #         rot_cases[ri] = np.max(iir_zeros) # best case (from rw)
+    #         rot_ids.append(iir_idz) # best id (for angle=ri)
+    #     # best heading
+    #     heading = np.where(rot_cases==np.max(rot_cases))[0]
+    #     if heading.shape[0] == 1:
+    #         heading = heading[0]
+    #     else:
+    #         # TODO (usually very close, eg.: 42,43)
+    #         # print('more than one possible heading')
+    #         # print(heading)
+    #         # import pdb; pdb.set_trace()
+    #         heading = np.min(heading)
+    #     # best img id, according to best heading
+    #     heading_id = rot_ids[heading]
+    #     if heading_id.shape[0] == 1:
+    #         heading_id = np.arange(bw_lim,fw_lim)[heading_id[0]]
+    #     else:
+    #         # TODO
+    #         # print('more than id for heading')
+    #         # print(heading_id)
+    #         # import pdb; pdb.set_trace()
+    #         heading_id = np.min(heading_id)
+    #     # update memory pointer
+    #     if self.mp >= 0:
+    #         self.mp = heading_id
+    #     # print('heading: {}, heading id: {}'.format(heading,heading_id))
+    #     return img_loc,heading,heading_id
 
+    # def get_heading_alt(self,query_img):
+    #     # location in route
+    #     qim_loc = self.get_img_location(query_img)
+    #     imx = self.ims[qim_loc]
+    #     # self.mp = qim_loc*1
+    #     # get heading ("rmf")
+    #     rot_cases = np.arange(360)
+    #     for ri in range(360):
+    #         imr = rotate(ri,imx)
+    #         rx_dif = (imx-imr).nonzero()[0].shape[0]
+    #         rot_cases[ri] = rx_dif
+    #     # rmin_id = np.where(rot_cases==np.min(rot_cases))
+    #     rmin_id = np.where(np.abs(rot_cases)==np.min(np.abs(rot_cases)))
+    #     # print('rmin_id: {}'.format(rmin_id))
+    #     rmin_deg = rot_cases[rmin_id]
+    #     heading = np.min(rmin_deg) # same for all = min
+    #     # print('heading: {}'.format(heading))
+    #     return heading
+            
+    def segment_memory(self,threshold=2880):
+        mem_ids = [0]
+        mem_id = 0
+        mode = 0
+        # dif: neg: something appears, pos: dissapears
+        while mem_id < self.ims.shape[0]:
+            ii_dif = self.ims - self.ims[mem_id]
+            ii_dif_nz = np.where(ii_dif>0,1,ii_dif)
+            ii_dif_nz = np.where(ii_dif_nz<0,-1,ii_dif_nz)
+            ii_dif_sum = np.sum(ii_dif_nz,axis=(1,2))
 
-    def get_heading_alt(self,query_img):
-        # location in route
-        qim_loc = self.get_img_location(query_img)
-        imx = self.ims[qim_loc]
-        # self.mp = qim_loc*1
-        # get heading ("rmf")
-        rot_cases = np.arange(360)
-        for ri in range(360):
-            imr = rotate(ri,imx)
-            rx_dif = (imx-imr).nonzero()[0].shape[0]
-            rot_cases[ri] = rx_dif
-        # rmin_id = np.where(rot_cases==np.min(rot_cases))
-        rmin_id = np.where(np.abs(rot_cases)==np.min(np.abs(rot_cases)))
-        # print('rmin_id: {}'.format(rmin_id))
-        rmin_deg = rot_cases[rmin_id]
-        heading = np.min(rmin_deg) # same for all = min
-        # print('heading: {}'.format(heading))
-        # import pdb; pdb.set_trace()
-        return heading
-    
-    def get_heading_seq(self,query_seq):
-        # don't know if imgs are rotated or not
-        qlocs = [self.get_img_location(qim) for qim in query_seq]
-        print(qlocs)
-        import pdb; pdb.set_trace()
+            if mode == 0:
+                ii_idx = np.where(ii_dif_sum[mem_id:]<0)[0]
+                idx = mem_id + ii_idx[0] if ii_idx.shape[0] > 0 else self.ims.shape[0]
+                mem_ids.append(idx)
+                mem_id = idx + 1
+                # print(idx)
+                # print(mem_ids)
+                # print(ii_dif_sum.astype(int)[idx-2:idx+11])
+                mode = 1
+                # import pdb; pdb.set_trace()
+
+            elif mode == 1:
+                # print('\nmode 1')
+                ii_dif_dif = ii_dif_sum - np.roll(ii_dif_sum,-1)
+                ii_idz = np.where(ii_dif_dif[mem_id:]<-threshold)[0]
+                idz = mem_id+1 + ii_idz[0] if ii_idz.shape[0] > 0 else self.ims.shape[0]
+                ii_idx = np.where(ii_dif_dif[idz:]>0)[0]
+                idx = idz + ii_idx[0] if ii_idx.shape[0] > 0 else self.ims.shape[0]
+                # import pdb; pdb.set_trace()
+                mem_ids.append(idx)
+                mem_id = idx + 1
+                # print(idx)
+                # print(mem_ids)
+                # print(ii_dif_dif.astype(int)[idx-2:idx+11])
+                mode = 0
+                # import pdb; pdb.set_trace()
+        return mem_ids
         
+
+    def get_pos_heading(self, qseq):
+        # quick location
+        self.mp = self.mem_pointer*1
+        # merging
+        qseq = np.array(qseq)
+        ii0 = qseq[0] - qseq[2]
+        ii1 = qseq[1] - qseq[2]
+        z0 = np.where(ii0>0,1,ii0)
+        z0 = np.where(z0<0,-1,z0)
+        z1 = np.where(ii1>0,1,ii1)
+        z1 = np.where(z1<0,-1,z1)
+        zx = z0 * z1
+        qx = qseq[2] * zx
+        xims = self.ims * zx
+        # heading from integration
+        import pdb; pdb.set_trace()
+        return [0,0,0]
 
     def get_heading(self, query_img):
         '''
@@ -265,6 +302,9 @@ class SequentialPerfectMemory:
         '''
         # get the rotational similarities between a query image and a window of route images
         wrsims = rmf(query_img, self.route_images[self.blimit:self.flimit], self.matcher, self.deg_range, self.deg_step)
+
+        # plot wrsims -> plot3d(wrsims)
+
         self.window_log.append([self.blimit, self.flimit])
         # Holds the best rot. match between the query image and route images
         wind_sims = []
@@ -455,7 +495,7 @@ class SequentialPerfectMemory:
 
     def dynamic_window_log_rate(self, best):
         '''
-        Change the window size depending on the current best and previous img match gradient. 
+        Change the window size d,subtitles=[]epending on the current best and previous img match gradient. 
         Update the size by log of the current window size
         :param best:
         :return:
@@ -537,7 +577,7 @@ class SequentialPerfectMemory:
     #         # get best similarity match adn index w.r.t degrees
     #         indices = self.argminmax(wrsims, axis=1)
     #         for i, idx in enumerate(indices):
-    #             wind_sims.append(wrsims[i, idx])
+    #             wind_sims.appe,subtitles=[]nd(wrsims[i, idx])
     #             wind_headings.append(self.degrees[idx])
 
     #         # Save the best degree and sim for each window similarities
@@ -630,6 +670,7 @@ class Seq2SeqPerfectMemory:
         self.degrees = np.arange(*deg_range)
         self.queue_size = queue_size
         self.queue = deque(maxlen=queue_size)
+        self.matcher = pick_im_matcher(matching)
         # if the dot product distance is used we need to make sure the images are standardized
         if self.matcher == dot_dist:
             pipe = Pipeline(normstd=True)
@@ -646,7 +687,7 @@ class Seq2SeqPerfectMemory:
         self.window_headings = []
         self.CMA = []
         # Matching variables
-        self.matcher = pick_im_matcher(matching)
+        # self.matcher = pick_im_matcher(matching)
         self.argminmax = np.argmin
         self.prev_match = 0.0
 

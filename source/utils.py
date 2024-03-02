@@ -775,7 +775,8 @@ def rmf(query_img, ref_imgs, matcher=mae, d_range=(0, 360), d_step=1):
 
     degrees = range(*d_range, d_step)
     total_search_angle = round((d_range[1] - d_range[0]) / d_step)
-    sims = np.empty((len(ref_imgs), total_search_angle), dtype=np.float)
+    # sims = np.empty((len(ref_imgs), total_search_angle), dtype=np.float)
+    sims = np.empty((len(ref_imgs), total_search_angle), dtype=float)
 
     for i, rot in enumerate(degrees):
         # rotated query image

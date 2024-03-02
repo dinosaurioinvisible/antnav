@@ -1,14 +1,18 @@
 
+import os
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.animation as animation
+from source.routedatabase import load_routes
+from source.imgproc import *
+import source.seqnav as spm
 
 def plot_img(img):
     plt.imshow(img,cmap='gray',aspect='auto')
     plt.show()
     plt.close()
 
-def plot_imgs(imgs,rows=0,cols=0,title='',mk_cbar=True):
+def plot_imgs(imgs,rows=0,cols=0,title='',mk_cbar=False,subtitles=[]):
     if rows==0 and cols==0:
         if len(imgs)==4:
             rows,cols = 2,2
@@ -22,6 +26,8 @@ def plot_imgs(imgs,rows=0,cols=0,title='',mk_cbar=True):
     fig.suptitle(title)
     for ei,ax in enumerate(axs.flat):
         im = ax.imshow(imgs[ei],vmin=-255,vmax=255,cmap='gray',aspect='auto')
+        if len(subtitles) == len(imgs):
+            ax.title.set_text(subtitles[ei])
     if mk_cbar:
         cbar = fig.colorbar(im,location='bottom')
     plt.show()
@@ -76,3 +82,47 @@ def plot_routes(rxy,qxy,cxyos=[],gxyos=[],title=''):
         plt.suptitle(title)
     plt.show()
     plt.close()
+
+def load_navi_and_route(navi_type='spm',route_type='',route_id=0):
+    dirpath = os.path.abspath(os.path.join(os.getcwd(),'..','antworld_data'))
+    if route_type == 'basic':
+        rx_path = os.path.join(dirpath,'routes')
+    elif route_type == 'set1':
+        rx_path = os.path.join(dirpath,'set1','exp1','routes')
+    elif route_type == 'curve':
+        rx_path = os.path.join(dirpath,'curve-bins')
+    gpath = os.path.join(dirpath,'grid70')
+    rx = load_routes(rx_path,[route_id],grid_path=gpath)[0]
+    pp_settings = {}
+    pp_settings['shape'] = (360,80)
+    pp_settings['blur'] = True
+    pipeline = Pipeline(**pp_settings)
+    rx_imgs = pipeline.apply(rx.get_imgs())
+    qx_imgs = pipeline.apply(rx.get_qimgs())
+    if navi_type == 'spm':
+        navi = spm.SequentialPerfectMemory(rx_imgs,'mae')
+    elif navi_type == 's2s':
+        navi = spm.Seq2SeqPerfectMemory(rx_imgs,'mae')
+    return navi,rx,rx_imgs,qx_imgs
+
+
+def get_corr_xy_points(route):
+    rcs = route.get_xycoords()
+    qcs = route.get_qxycoords()
+    # rx,ry; qx,qy; qrxy_id, qrx,qry
+    rxy = np.zeros((rcs['x'].shape[0],3))
+    rxy[:,0] = rcs['x']
+    rxy[:,1] = rcs['y']
+    rxy[:,2] = route.get_yaw()
+    qxys = np.zeros((qcs['x'].shape[0],6))
+    qxys[:,0] = qcs['x']
+    qxys[:,1] = qcs['y']
+    qxys[:,2] = route.route_dict['qid']
+    for i in range(qxys.shape[0]):
+        ri = route.min_dist_from_route((qxys[i][:2]))
+        qxys[i,3:] = [int(ri[0]),ri[2][0],ri[2][1]]
+    # import pdb; pdb.set_trace()
+    return rxy,qxys
+
+
+# 

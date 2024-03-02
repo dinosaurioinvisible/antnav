@@ -28,6 +28,7 @@ class Route:
         data_path = os.path.join(self.path, 'route' + self.route_id + '.csv')
         route_data = pd.read_csv(data_path, index_col=False)
         route_data = route_data.to_dict('list')
+
         # convert the lists to numpy arrays
         for k in route_data:
             route_data[k] = np.array(route_data[k])
@@ -51,9 +52,10 @@ class Route:
             qx = []
             qy = []
             qimg = []
+            qid = []
             # Fetch images from the grid that are located nearby route images.
             # for each route position
-            for i, (x, y) in enumerate(zip(route_data['x'], route_data['y'])):
+            for ei, (x, y) in enumerate(zip(route_data['x'], route_data['y'])):
                 # get distance between route point and all grid points
                 dist = np.squeeze(cdist([(x, y)], grid_xy, 'euclidean'))
                 # indexes of distances within the limit
@@ -66,15 +68,20 @@ class Route:
                 query_indexes = np.append(query_indexes, indexes)
 
                 for i in indexes:
+                    qid.append(ei)
                     qx.append(grid_xy[i, 0])
                     qy.append(grid_xy[i, 1])
                     imgfile = os.path.join(self.grid_path, grid['filename'][i])
                     qimg.append(cv.imread(imgfile, cv.IMREAD_GRAYSCALE))
+                    # print(len(query_indexes)-1,ei,indexes)
+                    # import pdb; pdb.set_trace()
 
+            route_data['qid'] = np.array(qid)
             route_data['qx'] = np.array(qx)
             route_data['qy'] = np.array(qy)
             route_data['qyaw'] = np.full_like(route_data['qx'], 0.0)
             route_data['qimgs'] = qimg
+            # import pdb; pdb.set_trace()
 
         return route_data
 
@@ -126,6 +133,7 @@ class Route:
         min_dist = np.min(dist)
         min_idx = np.argmin(dist) + start
         min_xy = (self.route_dict['x'][min_idx], self.route_dict['y'][min_idx])
+        # import pdb; pdb.set_trace()
         return min_idx, min_dist, min_xy
 
     def dist_from_route_end(self, xy):
