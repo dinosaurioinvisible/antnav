@@ -6,7 +6,6 @@ from scipy.spatial.distance import cdist
 from source.utils import calc_dists, squash_deg, travel_dist, pre_process, angular_error, seq_angular_error, travel_dist, meancurv2d
 from source.unwraper import Unwraper
 from source.imgproc import resize
-import copy
 
 
 class Route:
@@ -29,6 +28,7 @@ class Route:
         data_path = os.path.join(self.path, 'route' + self.route_id + '.csv')
         route_data = pd.read_csv(data_path, index_col=False)
         route_data = route_data.to_dict('list')
+
         # convert the lists to numpy arrays
         for k in route_data:
             route_data[k] = np.array(route_data[k])
@@ -52,9 +52,10 @@ class Route:
             qx = []
             qy = []
             qimg = []
+            qid = []
             # Fetch images from the grid that are located nearby route images.
             # for each route position
-            for x, y in zip(route_data['x'], route_data['y']):
+            for ei, (x, y) in enumerate(zip(route_data['x'], route_data['y'])):
                 # get distance between route point and all grid points
                 dist = np.squeeze(cdist([(x, y)], grid_xy, 'euclidean'))
                 # indexes of distances within the limit
@@ -67,15 +68,20 @@ class Route:
                 query_indexes = np.append(query_indexes, indexes)
 
                 for i in indexes:
+                    qid.append(ei)
                     qx.append(grid_xy[i, 0])
                     qy.append(grid_xy[i, 1])
                     imgfile = os.path.join(self.grid_path, grid['filename'][i])
                     qimg.append(cv.imread(imgfile, cv.IMREAD_GRAYSCALE))
+                    # print(len(query_indexes)-1,ei,indexes)
+                    # import pdb; pdb.set_trace()
 
+            route_data['qid'] = np.array(qid)
             route_data['qx'] = np.array(qx)
             route_data['qy'] = np.array(qy)
             route_data['qyaw'] = np.full_like(route_data['qx'], 0.0)
             route_data['qimgs'] = qimg
+            # import pdb; pdb.set_trace()
 
         return route_data
 
@@ -114,10 +120,7 @@ class Route:
         self.segment_indices = indices
         return indices, staring_coords
 
-    def calc_aae(self, trajectory):
-        '''
-        Calculate the Absolute Angular Error (AAE)
-        '''
+    def calc_errors(self, trajectory):
         if self.is_segmented:
             # TODO: for sgement we need to calculate the seq. error but starting 
             # the search at the start of each segment 
@@ -130,6 +133,7 @@ class Route:
         min_dist = np.min(dist)
         min_idx = np.argmin(dist) + start
         min_xy = (self.route_dict['x'][min_idx], self.route_dict['y'][min_idx])
+        # import pdb; pdb.set_trace()
         return min_idx, min_dist, min_xy
 
     def dist_from_route_end(self, xy):
@@ -198,7 +202,7 @@ class BoBRoute:
         self.route_id = str(route_id)
         self.unwraper = unwraper
         # mDefult resizing to the max size needed for the benchmarks
-        self.img_shape = (360, 90)
+        self.img_shape = (720, 150)
         self.resizer = resize(self.img_shape)
         # self.vcrop = vcrop
         # # change vcrop from percentage to an actual row index
@@ -230,22 +234,20 @@ class BoBRoute:
         # print(route_data.keys())
         if self.read_imgs:
             imgs = []
-            for i, file in enumerate(route_data['filename']):
+            for i in route_data['filename']:
                 #careful the filenames contain a leading space
-                im_path = os.path.join(self.path, file.strip())
+                im_path = os.path.join(self.path, i.strip())
                 img = cv.imread(im_path, cv.IMREAD_GRAYSCALE)
-                if self.unwraper and i==0:# unwrap the images
-                    self.unwraper = self.unwraper(img)
-                elif self.unwraper:
-                    img = self.unwraper.unwarp(img)
-                    img = self.resizer(img)
                 imgs.append(img)
-            
+            # unwrap the images
+            if self.unwraper:
+                self.unwraper = self.unwraper(imgs[0])
+                for i, im in enumerate(imgs):
+                    im = self.unwraper.unwarp(im)
+                    im = self.resizer(im)
+                    imgs[i] = im
             route_data['imgs'] = imgs
         return route_data
-
-    def set_sample_step(self, step: int):
-        self.sample_step = step
     
     def calc_errors(self, trajectory):
         r_sample = {'x': self.route_dict['x'][::self.sample_step], 
@@ -335,7 +337,7 @@ def make_query_repeat_routes(route, route_ref_id, rep_path, repeats, suffix=None
 def load_bob_routes_repeats(path, ids, suffix=None, ref_route=1, repeats=None, **kwargs):
     routes = []
     repeat_routes = []
-    # This the the reference route choosen from the repeats
+    # Thiis the the reference route choosen from the repeats. Usualy the first one.
     ref_route_id = ref_route
     for rid in ids:
         route_path =  os.path.join(path, 'route{}'.format(rid))
@@ -343,7 +345,7 @@ def load_bob_routes_repeats(path, ids, suffix=None, ref_route=1, repeats=None, *
             route_path = os.path.join(route_path, suffix)
             #this is the preat routes path with the suffix
             repeats_path = route_path
-        # the referencee route
+        # the referencee route is always 0, i.e the first route recorded
         route_path = route_path + str(ref_route_id)
         r = BoBRoute(route_path, route_id=rid, **kwargs)
         routes.append(r)
@@ -353,29 +355,7 @@ def load_bob_routes_repeats(path, ids, suffix=None, ref_route=1, repeats=None, *
             rep_routes_temp_l = []
             for rep in repeat_ids:
                 route_path = repeats_path + str(rep)
-                #TODO: make this modular and remove later
-                tempkwargs = copy.deepcopy(kwargs)
-                tempkwargs['sample_step'] = 10
-                r = BoBRoute(route_path, route_id=rep, **tempkwargs)
+                r = BoBRoute(route_path, route_id=rep, **kwargs)
                 rep_routes_temp_l.append(r)
             repeat_routes.append(rep_routes_temp_l)
     return routes, repeat_routes
-
-
-def load_all_bob_routes(path, ids, suffix=None, repeats=None, **kwargs):
-    routes_l = []
-    for rid in ids:
-        route_path =  os.path.join(path, 'route{}'.format(rid))
-        if suffix:
-            repeats_path = os.path.join(route_path, suffix)
-        # each route has repeats
-        #TODO: need to update this so that the functions 
-        # receives a list of ids instead of an int
-        repeat_ids = [*range(1, repeats+1)]
-        route = {} # dict for a route and the reps
-        for rep_id in repeat_ids:
-            r = BoBRoute(repeats_path + str(rep_id), route_id=rep_id)
-            route[rep_id] = r
-        routes_l.append(route)
-    return routes_l
-

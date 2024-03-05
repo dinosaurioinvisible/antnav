@@ -1,28 +1,17 @@
-from source.utils import pick_im_matcher, dot_dist, mae, rmse, cor_dist, rmf, seq2seqrmf, pair_rmf, cos_sim, mean_angle
+from source.utils import pick_im_matcher, mae, rmse, cor_dist, rmf, seq2seqrmf, pair_rmf, cos_sim, mean_angle
 from source.analysis import d2i_rmfs_eval
 import numpy as np
 import copy
 from collections import deque
-from source.imgproc import Pipeline
+from .navs import Navigator
 
-class SequentialPerfectMemory:
 
-    def __init__(self, route_images, matching, deg_range=(-180, 180), degree_shift=1, 
-                window=20, dynamic_range=0.1, w_thresh=None, mid_update=True, sma_size=3, 
+class SequentialPerfectMemory(Navigator):
+
+    def __init__(self, route_images, matcher='mae', deg_range=(-180, 180), degree_shift=1, 
+                window=20, dynamic_range=0.1, w_thresh=None, mid_update=True, 
                 **kwargs):
-        self.route_end = len(route_images)
-        self.route_images = route_images
-        self.deg_range = deg_range
-        self.deg_step = degree_shift
-        self.degrees = np.arange(*deg_range)
-        self.matcher = pick_im_matcher(matching)
-        # if the dot product distance is used we need to make sure the images are standardized
-        if self.matcher == dot_dist:
-            self.pipe = Pipeline(normstd=True)
-            self.route_images = self.pipe.apply(route_images)
-        else: 
-            self.pipe = Pipeline()
-
+        super().__init__(route_images, matcher=matcher, deg_range=deg_range, degree_shift=degree_shift, **kwargs)
         # Log Variables
         self.recovered_heading = []
         self.logs = []
@@ -39,22 +28,17 @@ class SequentialPerfectMemory:
         # initialisation values etc
         self.sma_qmet_log.append(0)
         # Matching variables
-
-        self.argminmax = np.argmin
         self.prev_match = 0.0
 
         # Window parameters
-        self.starting_window = abs(window)
         if window < 0:
+            self.starting_window = abs(window)
             self.window = abs(window)
             self.adaptive = True
             self.upper = int(round(self.window/2))
             self.lower = self.window - self.upper
             self.mem_pointer = self.window - self.upper
-            self.w_thresh = w_thresh
-            if sma_size:
-                self.sma_size = sma_size
-                #self.idf_sma = []
+            self.w_thresh =  w_thresh
         else:
             self.window = window
             self.adaptive = False
@@ -73,26 +57,47 @@ class SequentialPerfectMemory:
 
         # heading parameters
         self.qmet_q = deque(maxlen=3)
-
-        # choose pointer update function/criterion
-        # TODO:
     
     #TODO Need a better name for this function
     def reset_window(self, pointer):
         '''
-        Resets the memory pointer assuming and the window size
+        Resets the pointer assuming the window size is the same
         '''
         self.mem_pointer = pointer
-        #self.window =self.starting_window
+        self.flimit = self.mem_pointer + self.upper
+        self.blimit = self.mem_pointer - self.lower
 
+        if self.flimit > self.route_end:
+            self.mem_pointer = (self.route_end - self.window) + self.lower
+            self.flimit = self.route_end
+            self.blimit = self.route_end - self.window
+        if self.blimit <= 0:
+            self.mem_pointer = self.lower
+            self.blimit = 0
+            self.flimit = self.mem_pointer + self.window
+    
+    def set_mem_pointer(self, i: int):
+        '''
+        Resets the pointer assuming the window size may have changed
+        Recalculates the upper and lower margins
+        '''
+        self.mem_pointer = i
         # update upper an lower margins
         self.upper = int(round(self.window/2))
         self.lower = self.window - self.upper
 
         # Update the bounds of the window
-        # the window limits bounce back near the ends of the route
-        self.blimit = max(0, self.mem_pointer - self.lower)
-        self.flimit = min(self.route_end, self.mem_pointer + self.upper)
+        self.flimit = self.mem_pointer + self.upper
+        self.blimit = self.mem_pointer - self.lower
+        if self.flimit > self.route_end:
+            self.mem_pointer = (self.route_end - self.window) + self.lower
+            self.flimit = self.route_end
+            self.blimit = self.route_end - self.window
+        if self.blimit <= 0:
+            # the mem pointer should be in the midle of the window
+            self.mem_pointer = self.lower
+            self.blimit = 0
+            self.flimit = self.mem_pointer + self.window
 
     def get_heading(self, query_img):
         '''
@@ -100,7 +105,6 @@ class SequentialPerfectMemory:
         :param query_img:
         :return:
         '''
-        query_img = self.pipe.apply(query_img)
         # get the rotational similarities between a query image and a window of route images
         wrsims = rmf(query_img, self.route_images[self.blimit:self.flimit], self.matcher, self.deg_range, self.deg_step)
         self.window_log.append([self.blimit, self.flimit])
@@ -127,7 +131,7 @@ class SequentialPerfectMemory:
 
         # log the memory pointer before the update
         # mem_pointer - upper can cause the calc_dists() to go out of bounds
-        matched_idx = self.blimit + idx
+        matched_idx = self.mem_pointer + (idx - self.lower)
         self.matched_index_log.append(matched_idx)
 
         #evaluate ridf
@@ -140,7 +144,15 @@ class SequentialPerfectMemory:
             self.check_w_size()
 
         # Update memory pointer
+        # if h_eval:
         self.update_mid_pointer(idx)
+        # else:
+        #     self.set_mem_pointer(self.mem_pointer + 1)
+
+        # the heading changes if the rmf quality is low
+
+        #heading = self.evaluated_heading(h_eval)
+        
         return heading
 
     def eval_ridf(self, ridf):
@@ -169,10 +181,13 @@ class SequentialPerfectMemory:
         self.mem_pointer += idx
         # in this case the upperpart is equal to the upper margin
         self.upper = self.window
-        # Update the bounds of the window
-        # the window limits bounce back near the ends of the route
-        self.blimit = max(0, self.mem_pointer)
-        self.flimit = min(self.route_end, self.mem_pointer + self.upper)
+        self.flimit = self.mem_pointer + self.upper
+        self.blimit = self.mem_pointer
+
+        if self.flimit > self.route_end:
+            self.mem_pointer = self.blimit + idx
+            self.flimit = self.route_end
+            self.blimit = self.route_end - self.window
 
     def update_mid_pointer(self, idx):
         '''
@@ -181,17 +196,25 @@ class SequentialPerfectMemory:
         :return:
         '''
         # Update memory pointer
-        self.mem_pointer = self.blimit + idx
+        change = idx - self.lower
+        self.mem_pointer += change
 
         # update upper an lower margins
         self.upper = int(round(self.window/2))
         self.lower = self.window - self.upper
 
         # Update the bounds of the window
-        # the window limits bounce back near the ends of the route
-        self.blimit = max(0, self.mem_pointer - self.lower)
-        self.flimit = min(self.route_end, self.mem_pointer + self.upper)
-        
+        self.flimit = self.mem_pointer + self.upper
+        self.blimit = self.mem_pointer - self.lower
+        if self.flimit > self.route_end:
+            self.mem_pointer = (self.route_end - self.window) + self.lower
+            self.flimit = self.route_end
+            self.blimit = self.route_end - self.window
+        if self.blimit <= 0:
+            # the mem pointer should be in the midle of the window
+            self.mem_pointer = self.lower
+            self.blimit = 0
+            self.flimit = self.mem_pointer + self.window
 
     def check_w_size(self):
         self.window = self.route_end if self.window > self.route_end else self.window
@@ -243,9 +266,9 @@ class SequentialPerfectMemory:
         '''
         self.recovered_heading.append(mean_angle(wind_heading))
 
-    def dynamic_window_con(self, best):
+    def dynamic_window_sim(self, best):
         '''
-        Change the window size by a constant depending on the best img match gradient.
+        Change the window size depending on the best img match gradient.
         If the last best img sim > the current best img sim the window grows
         and vice versa
         :param best:
@@ -286,20 +309,6 @@ class SequentialPerfectMemory:
             self.window -= round(np.log(self.window))
         self.prev_match = best
     
-    def dynamic_window_sma_log_rate(self, best):
-        '''
-        Change the window size depending on the current best and SMA of past mathes gradient. 
-        Update the size by log of the current window size
-        :param best:
-        :return:
-        '''
-        # Dynamic window adaptation based on SMA match gradient.
-        idfmin_sma = np.mean(self.best_sims[max(-self.sma_size, -len(self.best_sims)):])
-        if best > idfmin_sma or self.window <= self.min_window:
-            self.window += round(self.min_window/np.log(self.window))
-        else:
-            self.window -= round(np.log(self.window))
-    
     def thresh_dynamic_window_log_rate(self, best):
         '''
         Change the window size depending on the current best and previous img match gradient. 
@@ -311,9 +320,8 @@ class SequentialPerfectMemory:
         perc_cng = (best - self.prev_match + np.finfo(np.float).eps)/(self.prev_match + np.finfo(np.float).eps)
         if perc_cng > self.w_thresh or self.window <= self.min_window:
             self.window += round(self.min_window/np.log(self.window))
-        elif perc_cng < -self.w_thresh:
+        else:
             self.window -= round(np.log(self.window))
-        else: pass
         self.prev_match = best
 
     def dynamic_window_h2(self, h):
@@ -348,6 +356,77 @@ class SequentialPerfectMemory:
             self.get_heading(query_img)
         return self.recovered_heading, self.window_log
     
+    # def navigate(self, query_imgs):
+    #     assert isinstance(query_imgs, list)
+
+    #     # upper = int(self.window/2)
+    #     # lower = self.window - upper
+    #     # mem_pointer = upper
+    #     mem_pointer = 0
+    #     flimit = self.window
+    #     blimit = 0
+    #     self.window_log.append([blimit, flimit])
+    #     # For every query image
+    #     for query_img in query_imgs:
+
+    #         # get the rotational similarities between a query image and a window of route images
+    #         wrsims = rmf(query_img, self.route_images[blimit:flimit], self.matcher, self.deg_range, self.deg_step)
+    #         self.window_log.append([blimit, flimit])
+    #         # Holds the best rot. match between the query image and route images
+    #         wind_sims = []
+    #         # Recovered headings for the current image
+    #         wind_headings = []
+    #         # get best similarity match adn index w.r.t degrees
+    #         indices = self.argminmax(wrsims, axis=1)
+    #         for i, idx in enumerate(indices):
+    #             wind_sims.append(wrsims[i, idx])
+    #             wind_headings.append(self.degrees[idx])
+
+    #         # Save the best degree and sim for each window similarities
+    #         self.window_sims.append(wind_sims)
+    #         self.window_headings.append(wind_headings)
+    #         # append the rsims of all window route images for that current image
+    #         self.logs.append(wrsims)
+    #         idx = self.argminmax(wind_sims)
+    #         self.best_sims.append(wind_sims[idx])
+    #         h = wind_headings[idx]
+    #         self.recovered_heading.append(h)
+    #         # self.average_heading2(h)
+    #         # self.average_headings(wind_headings)
+    #         # self.consensus_heading(wind_headings, h)
+
+    #         mem_pointer += idx
+    #         if mem_pointer + self.window > self.route_end:
+    #             mem_pointer = blimit + idx
+    #             flimit = self.route_end
+    #             blimit = self.route_end - self.window
+    #         else:
+    #             blimit = mem_pointer
+    #             flimit = mem_pointer + self.window
+
+    #         self.matched_index_log.append(mem_pointer)
+    #         # self.window_log.append([blimit, flimit])
+
+
+    #         # Change the pointer and bounds for an adaptive window.
+    #         if self.adaptive:
+    #             self.dynamic_window_sim(wind_sims[idx])
+    #             # self.dynamic_window_h2(h)
+    #             # self.dynamic_window_h(wind_headings)
+
+    #         #
+    #         # # Lower confidence of the memories depending on the match score
+    #         # window_mean = sum(wind_sims)/len(wind_sims)
+    #         # if i == 0: # If this is the first window
+    #         #     self.CMA.extend([window_mean] * 2)
+    #         # else:
+    #         #     cma = self.CMA[-1]
+    #         #     self.CMA.append(cma + ((window_mean-cma)/(len(self.CMA)+1)))
+    #         # for j in range(mem_pointer, limit):
+    #         #     if wind_sims[j-mem_pointer] > self.CMA[-1]:
+    #         #         self.confidence[j] -= 0.1
+
+    #     return self.recovered_heading, self.window_log
 
     def get_rec_headings(self):
         return self.recovered_heading
@@ -383,24 +462,14 @@ class SequentialPerfectMemory:
             return f'SMW({self.window})'
 
 
-class Seq2SeqPerfectMemory:
+class Seq2SeqPerfectMemory(Navigator):
     
-    def __init__(self, route_images, matching, deg_range=(-180, 180), degree_shift=1, window=20, dynamic_range=0.1, queue_size=3):
-        self.route_end = len(route_images)
-        self.route_images = route_images
-        self.deg_range = deg_range
-        self.deg_step = degree_shift
-        self.degrees = np.arange(*deg_range)
+    def __init__(self, route_images, matcher='mae', deg_range=(-180, 180), degree_shift=1, 
+                 window=20, dynamic_range=0.1, queue_size=3, **kwargs):
+        super().__init__(route_images, matcher=matcher, deg_range=deg_range, degree_shift=degree_shift, **kwargs)
+        # current sequence params
         self.queue_size = queue_size
         self.queue = deque(maxlen=queue_size)
-        # if the dot product distance is used we need to make sure the images are standardized
-        if self.matcher == dot_dist:
-            self.pipe = Pipeline(normstd=True)
-            self.route_images = self.pipe.apply(route_images)
-        else: 
-            self.pipe = Pipeline()
-
-
         # Log Variables
         self.recovered_heading = []
         self.logs = []
@@ -412,7 +481,6 @@ class Seq2SeqPerfectMemory:
         self.window_headings = []
         self.CMA = []
         # Matching variables
-        self.matcher = pick_im_matcher(matching)
         self.argminmax = np.argmin
         self.prev_match = 0.0
 
@@ -491,7 +559,6 @@ class Seq2SeqPerfectMemory:
 
         # log the memory pointer before the update
         # mem_pointer - upper can cause the calc_dists() to go out of bounds
-        #!!! For the mid update only
         matched_idx = self.mem_pointer + (idx - self.lower)
         self.matched_index_log.append(matched_idx)
 
@@ -519,7 +586,7 @@ class Seq2SeqPerfectMemory:
         self.blimit = self.mem_pointer
 
         if self.flimit > self.route_end:
-            self.mem_pointer = self.route_end - self.window
+            self.mem_pointer = self.blimit + idx
             self.flimit = self.route_end
             self.blimit = self.route_end - self.window
 
@@ -592,7 +659,7 @@ class Seq2SeqPerfectMemory:
         '''
         self.recovered_heading.append(mean_angle(wind_heading))
 
-    def dynamic_window_fixed(self, best):
+    def dynamic_window_sim(self, best):
         '''
         Change the window size depending on the best img match gradient.
         If the last best img sim > the current best img sim the window grows

@@ -1,29 +1,17 @@
 from source.utils import pick_im_matcher, mae, rmse, cor_dist, rmf, nanmae
 import numpy as np
-from source.navs.navs import Navigator
-from source.utils import dot_dist
-from source.imgproc import Pipeline
-
+from .navs import Navigator
 
 class PerfectMemory(Navigator):
 
     def __init__(self, route_images, **kwargs):
         super().__init__(route_images, **kwargs)
         self.recovered_heading = []
-        #ridf field logs
-        self.ridff_logs = []
+        self.logs = []
         self.matched_index_log = []
-        self.argminmax = np.argmin
         self.best_sims = []
-        # if the dot product distance is used we need to make sure the images are standardized
-        if self.matcher == dot_dist:
-            self.pipe = Pipeline(normstd=True)
-            self.route_images = self.pipe.apply(route_images)
-        else: 
-            self.pipe = Pipeline()
 
     def get_heading(self, query_img):
-        query_img = self.pipe.apply(query_img)
         # get the rotational similarities between a query image and a window of route images
         rsims = rmf(query_img, self.route_images, self.matcher, self.deg_range, self.deg_step)
 
@@ -38,7 +26,7 @@ class PerfectMemory(Navigator):
             mem_headings.append(self.degrees[idx])
 
         # append the rsims of all window route images for that query image
-        #self.ridff_logs.append(rsims)
+        self.logs.append(rsims)
         # find best image match and heading
         index = int(self.argminmax(mem_sims))
         self.best_sims.append(mem_sims[index])
@@ -54,11 +42,41 @@ class PerfectMemory(Navigator):
             self.get_heading(query_img)
         return self.recovered_heading
 
+    # def navigate(self, query_imgs):
+    # #TODO: need to be updated to use get heading in a loop
+    #     assert isinstance(query_imgs, list)
+
+    #     # For every query image image
+    #     for query_img in query_imgs:
+
+    #         # get the rotational similarities between a query image and a list of all route images
+    #         rsims = rmf(query_img, self.route_images, self.matcher, self.deg_range, self.deg_step)
+
+    #         # Holds the best rot. similarity between the query image and route images
+    #         mem_sims = []
+    #         # Hold the recovered Headings for the current image by the different route images
+    #         mem_headings = []
+
+    #         indices = self.argminmax(rsims, axis=1)
+    #         for i, idx in enumerate(indices):
+    #             mem_sims.append(rsims[i, idx])
+    #             mem_headings.append(self.degrees[idx])
+
+    #         # append the rsims between one query image and all route images
+    #         self.logs.append(rsims)
+    #         # Get best image match
+    #         index = int(self.argminmax(mem_sims))
+    #         # Get best image heading
+    #         self.recovered_heading.append(mem_headings[index])
+    #         self.matched_index_log.append(index)
+
+    #     return self.recovered_heading
+
     def get_rec_headings(self): return self.recovered_heading
 
     def get_index_log(self): return self.matched_index_log
 
-    def get_rsims_log(self): return self.ridff_logs
+    def get_rsims_log(self): return self.logs
 
     def get_window_log(self): return None
 

@@ -85,13 +85,13 @@ def plot_route(route, traj=None, scale=None, window=None, windex=None, save=Fals
             ax.scatter(traj['x'][:windex], traj['y'][:windex])
             u, v = pol2cart_headings(90 - traj['heading'])
             ax.quiver(traj['x'][:windex], traj['y'][:windex], u[:windex], v[:windex], scale=scale)
-            ax.plot([traj['x'][:windex], route['x'][traj['min_dist_index'][:windex]]],
-                    [traj['y'][:windex], route['y'][traj['min_dist_index'][:windex]]], color='k')
     # Plot grid test points
     if 'qx' in route and window is None and not traj:
         ax.scatter(route['qx'], route['qy'])
     # Plot the trajectory of the agent when repeating the route
     if traj and not window:
+        # TODO: This re-correction (90 - headings) of the heading may not be necessary.
+        # TODO: I need to test if this will work as expected when the new results are in.
         u, v = pol2cart_headings(90 - traj['heading'])
         ax.scatter(traj['x'], traj['y'], label=label)
         # ax.plot(traj['x'], traj['y'])
@@ -113,16 +113,16 @@ def plot_route(route, traj=None, scale=None, window=None, windex=None, save=Fals
     
 
 
-def animated_window(route, traj=None, path=None, scale=70, save=False, size=(10, 10), title=None):
+def animated_window(route, window, traj=None, path=None, scale=70, save=False, size=(10, 10), title=None):
     check_for_dir_and_create(path)
     if path:
         save = True
-    for i, w in enumerate(traj['window_log']):
+    for i, w in enumerate(window):
         plot_route(route, traj=traj, window=w, windex=i, save=save, scale=scale, size=size, path=path, title=title)
 
 
 def plot_map(world, route_cords=None, grid_cords=None, size=(10, 10), save=False, zoom=(), zoom_factor=1500,
-             route_headings=None, grid_headings=None, error_indexes=None, marker_size=5, scale=40, save_id=None, window=None,
+             route_headings=None, grid_headings=None, error_indexes=None, marker_size=5, scale=40, route_zoom=False, save_id=None, window=None,
              path='', show=True, title=None):
     '''
     Plots a top down view of the grid world, with markers or quivers of route and grid positions
@@ -137,6 +137,7 @@ def plot_map(world, route_cords=None, grid_cords=None, size=(10, 10), save=False
     :param grid_headings: Heading in degrees of grid positions
     :param marker_size: Size of route of grid marker
     :param scale: Size of quiver scale. (relative to image size)
+    :param route_zoom: Rectangle zoom around the route
     :param save_id: A file id to save the plot and avoid override of the saved file
     :param window: The pointer to the memory window
     :return: -
@@ -181,6 +182,9 @@ def plot_map(world, route_cords=None, grid_cords=None, size=(10, 10), save=False
     if zoom:
         plt.xlim([zoom[0] - zoom_factor, zoom[0] + zoom_factor])
         plt.ylim([zoom[1] - zoom_factor, zoom[1] + zoom_factor])
+    if route_zoom:
+        # plt.ylim([])
+        plt.xlim([4700, 6500])
     plt.xticks([]), plt.yticks([])
     # plt.title("A", loc="left", fontsize=20)
     plt.tight_layout(pad=0)
@@ -748,12 +752,12 @@ def _entropy_dist(a, b, bins=256):
 
 
 def pick_im_matcher(im_matcher=None):
-    matchers = {'ccd': cor_dist, 'dot': dot_dist, 'rmse': rmse, 'mse':mse, 'mae': mae, 'entropy':entropy_dist}
+    matchers = {'corr': cor_dist, 'dot': dot_dist, 'rmse': rmse, 'mse':mse, 'mae': mae, 'entropy':entropy_dist}
     if not matchers.get(im_matcher):
         raise Exception('Non valid matcher method name')
     return matchers.get(im_matcher)
 
-def rmf(query_img, ref_imgs, matcher=mae, d_range=(-180, 180), d_step=1):
+def rmf(query_img, ref_imgs, matcher=mae, d_range=(0, 360), d_step=1):
     """
     Rotational Matching Function.
     Rotates a query image and compares it with one or more reference images
@@ -771,7 +775,8 @@ def rmf(query_img, ref_imgs, matcher=mae, d_range=(-180, 180), d_step=1):
 
     degrees = range(*d_range, d_step)
     total_search_angle = round((d_range[1] - d_range[0]) / d_step)
-    sims = np.empty((len(ref_imgs), total_search_angle), dtype=np.float32)
+    # sims = np.empty((len(ref_imgs), total_search_angle), dtype=np.float)
+    sims = np.empty((len(ref_imgs), total_search_angle), dtype=float)
 
     for i, rot in enumerate(degrees):
         # rotated query image
@@ -798,14 +803,14 @@ def pair_rmf(query_imgs, ref_imgs, matcher=mae, d_range=(0, 360), d_step=1):
 
     degrees = range(*d_range, d_step)
     total_search_angle = round((d_range[1] - d_range[0]) / d_step)
-    sims = np.empty((len(ref_imgs), total_search_angle), dtype=np.float32)
+    sims = np.empty((len(ref_imgs), total_search_angle), dtype=np.float)
 
     for i, (q_img, r_img) in enumerate(zip(query_imgs, ref_imgs)):
         sims[i] = [matcher(rotate(rot, q_img), r_img) for rot in degrees]
 
     return sims
 
-def seq2seqrmf(query_imgs, ref_imgs, matcher=mae, d_range=(-180, 180), d_step=1):
+def seq2seqrmf(query_imgs, ref_imgs, matcher=mae, d_range=(0, 360), d_step=1):
     """
     Rotational Matching Function.
     Rotates multiple query images and compares then with one or more reference images
@@ -823,12 +828,12 @@ def seq2seqrmf(query_imgs, ref_imgs, matcher=mae, d_range=(-180, 180), d_step=1)
 
     degrees = range(*d_range, d_step)
     total_search_angle = round((d_range[1] - d_range[0]) / d_step)
-    sims = np.empty((len(query_imgs)*len(ref_imgs), total_search_angle), dtype=np.float32)
+    sims = np.empty((len(query_imgs)*len(ref_imgs), total_search_angle), dtype=np.float)
     for i, query_img in enumerate(query_imgs):
         for j, rot in enumerate(degrees):
             # rotated query image
             rqimg = rotate(rot, query_img)
-            sims[(i)*len(ref_imgs):(i+1)*len(ref_imgs), j] = matcher(rqimg, ref_imgs)
+            sims[:(i+1)*len(query_imgs), j] = matcher(rqimg, ref_imgs)
 
     return sims
 
@@ -877,7 +882,7 @@ def degree_error(x_cords, y_cords, x_route_cords, y_route_cords, route_heading, 
     k = []  # Holds the index of the memory with the shortest distance to the grid position
     errors = []  # Holds the error between the world grid image and the closest route image
     route_end = len(x_route_cords)
-    search_step = 20
+    search_step = 10
     memory_pointer = 0
     limit = memory_pointer + search_step
     # TODO: Need to iterate the total number of window comparisons instead of the total coord points
@@ -896,15 +901,15 @@ def degree_error(x_cords, y_cords, x_route_cords, y_route_cords, route_heading, 
 
 
 def seq_angular_error(route, trajectory, memory_pointer=0, search_step=20):
+    # TODO: Modify the function to calculate all the distances first (distance matrix)
+    # TODO: and then calculate the minimum argument and extract the error.
     # Holds the angular error between the query position and the closest route position
     errors = []
     mindist_index = []
     route_end = len(route['x'])
     search_step = search_step
     memory_pointer = memory_pointer
-    #initial limits at start of the route
-    flimit = memory_pointer + 2*search_step
-    blimit = 0
+    limit = memory_pointer + search_step
 
     grid_xy = np.column_stack([trajectory['x'], trajectory['y']])
     route_xy = np.column_stack([route['x'], route['y']])
@@ -914,15 +919,15 @@ def seq_angular_error(route, trajectory, memory_pointer=0, search_step=20):
     # For every query position
     for i in range(len(trajectory['heading'])):
         # get distance between route point and all grid points
-        xy = route_xy[blimit:flimit]
+        xy = route_xy[memory_pointer:limit]
         dist = np.squeeze(cdist(np.expand_dims(grid_xy[i], axis=0), xy, 'euclidean'))
         idx = np.argmin(dist)
-        mindist_index.append(idx + blimit)
+        mindist_index.append(idx + memory_pointer)
         errors.append(180 - abs(abs(recovered_headings[i] - route_heading[mindist_index[-1]]) - 180))
         memory_pointer = mindist_index[-1]
-        # update the limits
-        blimit = max(memory_pointer - search_step, 0)
-        flimit = min(memory_pointer + search_step, route_end)
+        # update the limit
+        limit = memory_pointer + search_step
+        if limit > route_end: limit = route_end
     return errors, mindist_index
 
 

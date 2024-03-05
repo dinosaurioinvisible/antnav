@@ -7,10 +7,9 @@ import multiprocessing
 import functools
 import numpy as np
 import yaml
-import uuid
 from source.utils import pre_process, load_route_naw, check_for_dir_and_create, calc_dists, squash_deg
 from source import seqnav as spm, perfect_memory as pm
-from source.routedatabase import Route, load_all_bob_routes, load_routes, load_bob_routes, load_bob_routes_repeats
+from source.routedatabase import Route, load_routes, load_bob_routes, load_bob_routes_repeats
 from source.imgproc import Pipeline
 from source import infomax
 
@@ -83,9 +82,9 @@ class Benchmark:
         if params.get('edge_range') or params.get('loc_norm') or params.get('gauss_loc_norm'):
             #grid_dict[:] = [x for x in grid_dict if self.remove_blur_edge(x)]
             #grid_dict[:] = [x for x in grid_dict if not self.remove_non_blur_edge(x)]
-            #grid_dict[:] = [x for x in grid_dict if self.remove_edge_loc_gloc_combos(x)]
-            #grid_dict[:] = [x for x in grid_dict if self.remove_edge_gloc_combos(x)]
-            #grid_dict[:] = [x for x in grid_dict if self.remove_edge_loc_combos(x)]
+            grid_dict[:] = [x for x in grid_dict if self.remove_edge_loc_gloc_combos(x)]
+            grid_dict[:] = [x for x in grid_dict if self.remove_edge_gloc_combos(x)]
+            grid_dict[:] = [x for x in grid_dict if self.remove_edge_loc_combos(x)]
             grid_dict[:] = [x for x in grid_dict if self.remove_gloc_loc_combos(x)]
         return grid_dict
 
@@ -135,8 +134,8 @@ class Benchmark:
                       'route_path_suffix':self.route_path_suffix,
                       'repeats':self.route_repeats, 'results_path':self.results_path}
         # Partial callable
-
-        if self.bench_data == 'bob':
+        #TODO: here i need to decide on a worked based on the dataset.
+        if self.bench_data == 'ftl':
             worker = functools.partial(self.worker_bench_repeats, arg_params, shared)
         elif self.bench_data == 'aw2':
             worker = functools.partial(self.worker_bench, arg_params, shared)
@@ -266,8 +265,8 @@ class Benchmark:
 
         log = {'route_id': [], 'blur': [], 'edge': [], 'res': [],  'histeq':[], 'vcrop':[], 
                'window': [], 'matcher': [], 'deg_range':[], 'mean_error': [], 
-               'seconds': [], 'errors': [], 'index_diff': [], 'window_log': [], 
-               'matched_index': [], 'min_dist_index': [], 'dist_diff': [], 'tx': [], 'ty': [], 'th': [],
+               'seconds': [], 'errors': [], 'abs_index_diff': [], 'window_log': [], 
+               'matched_index': [], 'dist_diff': [], 'tx': [], 'ty': [], 'th': [],
                'ah': [] , 'rmfs_file':[],'best_sims':[], 'loc_norm':[], 
                'gauss_loc_norm':[], 'wave':[], 'nav-name':[]}
         
@@ -307,16 +306,16 @@ class Benchmark:
                 traj = {'x': qxy['x'], 'y': qxy['y'], 'heading': recovered_heading}
                 #!!!!!! Important step to get the heading in the global coord system
                 traj['heading'] = squash_deg(route.get_qyaw() + recovered_heading)
-                errors, min_dist_index = route.calc_aae(traj)
+                errors, min_dist_index = route.calc_errors(traj)
                 # Difference between matched index and minimum distance index and distance between points
                 matched_index = nav.get_index_log()
                 if matched_index:
-                    index_diffs = np.subtract(min_dist_index, nav.get_index_log())
+                    abs_index_diffs = np.absolute(np.subtract(nav.get_index_log(), min_dist_index))
                     dist_diff = calc_dists(route.get_xycoords(), min_dist_index, matched_index)
                     abs_index_diffs = abs_index_diffs.tolist()
                     dist_diff = dist_diff.tolist()
                 else:
-                    index_diffs = None
+                    abs_index_diffs = None
                     dist_diff = None
                 
                 mean_route_error = np.mean(errors)
@@ -353,8 +352,7 @@ class Benchmark:
                 # This is the agent heading from the egocentric agent reference
                 log['ah'].append(rec_headings)
                 log['matched_index'].append(matched_index)
-                log['min_dist_index'].append(min_dist_index)
-                log['index_diff'].append(index_diffs)
+                log['abs_index_diff'].append(abs_index_diffs)
                 log['dist_diff'].append(dist_diff)
                 log['errors'].append(errors)
                 log['best_sims'].append(nav.get_best_sims())
@@ -378,46 +376,34 @@ class Benchmark:
         log = {'route_id': [],'ref_route':[], 'rep_id': [], 'sample_rate':[], 'blur': [], 
                'histeq':[], 'edge': [], 'res': [], 'vcrop':[],'window': [], 'matcher': [],
                'deg_range':[], 'mean_error': [], 'seconds': [], 'errors': [], 
-               'index_diff': [], 'window_log': [], 'matched_index': [], 'dist_diff': [], 
+               'abs_index_diff': [], 'window_log': [], 'matched_index': [], 'dist_diff': [], 
                'tx': [], 'ty': [], 'th': [],'ah': [] , 'rmfs_file':[], 'best_sims':[], 
                'loc_norm':[], 'gauss_loc_norm':[], 'wave':[], 'nav-name':[]}
 
         
         # Load all routes
-        routes = load_all_bob_routes(routes_path, route_ids, suffix=route_path_suffix, repeats=repeats)
         # routes = load_routes(routes_path, route_ids, max_dist=dist, grid_path=grid_path)
-        #print('routes ->', routes)
-        #print('routes dict -> ', routes[0])
+
         #  Go though all combinations in the chunk
         for combo in chunk:
-
+            routes, repeat_routes = load_bob_routes_repeats(routes_path, route_ids, suffix=route_path_suffix, repeats=repeats, **combo)
             matcher = combo.get('matcher')
             window = combo.get('window')
             window_log = None
             for ri, route in enumerate(routes):  # for every route
-                #print('ref route -> ', combo['ref_route'])
-                ref_rep = route[combo['ref_route']]
-                ref_rep.set_sample_step(combo['sample_step'])
-                repeat_ids = [*range(1, repeats+1)]
-                #print(repeat_ids)
-                repeat_ids.remove(combo['ref_route'])
-                #print(repeat_ids)
-
-                for rep_id in repeat_ids: # for every repeat route
-                    test_rep = route[rep_id]
-                    test_rep.set_sample_step(10)
-
+                
+                for rep_route in repeat_routes[ri]: # for every repeat route
                     tic = time.perf_counter()
                     # Preprocess images
                     pipe = Pipeline(**combo)
-                    route_imgs = pipe.apply(ref_rep.get_imgs())
-                    test_imgs = pipe.apply(test_rep.get_imgs())
+                    route_imgs = pipe.apply(route.get_imgs())
+                    test_imgs = pipe.apply(rep_route.get_imgs())
                     # Run navigation algorithm
                     if window:
                         nav = spm.SequentialPerfectMemory(route_imgs, matcher, **combo)
                         recovered_heading, window_log = nav.navigate(test_imgs)
                     elif window == 0:
-                        nav = pm.PerfectMemory(route_imgs, **combo)
+                        nav = pm.PerfectMemory(route_imgs, matcher, **combo)
                         recovered_heading = nav.navigate(test_imgs)
                     else:
                         infomaxParams = infomax.Params()
@@ -428,36 +414,35 @@ class Benchmark:
                     # Get time complexity
                     time_compl = toc - tic
                     # Get the errors and the minimum distant index of the route memory
-                    qxy = test_rep.get_xycoords()
+                    qxy = rep_route.get_xycoords()
                     traj = {'x': qxy['x'], 'y': qxy['y'], 'heading': recovered_heading}
-
                     #################!!!!!! Important step to get the heading in the global coord system
-                    traj['heading'] = squash_deg(test_rep.get_yaw() + recovered_heading)
-                    errors, min_dist_index = ref_rep.calc_aae(traj)
+                    traj['heading'] = squash_deg(rep_route.get_yaw() + recovered_heading)
+                    errors, min_dist_index = route.calc_errors(traj)
                     # Difference between matched index and minimum distance index and distance between points
                     matched_index = nav.get_index_log()
                     if matched_index:
-                        index_diffs = np.subtract(min_dist_index, nav.get_index_log())
-                        dist_diff = calc_dists(ref_rep.get_xycoords(), min_dist_index, matched_index)
-                        index_diffs = index_diffs.tolist()
+                        abs_index_diffs = np.absolute(np.subtract(nav.get_index_log(), min_dist_index))
+                        dist_diff = calc_dists(route.get_xycoords(), min_dist_index, matched_index)
+                        abs_index_diffs = abs_index_diffs.tolist()
                         dist_diff = dist_diff.tolist()
                     else:
-                        index_diffs = None
+                        abs_index_diffs = None
                         dist_diff = None
                     mean_route_error = np.mean(errors)
                     window_log = nav.get_window_log()
                     rec_headings = nav.get_rec_headings()
                     deg_range = nav.deg_range
 
-                    #rmf_logs = np.array(nav.get_rsims_log(), dtype=object)
-                    rmf_logs_file = f"rmfs-{chunk_id}-{shared['jobs']}-{test_rep.get_route_id()}"
-                    # rmfs_path = os.path.join(results_path, rmf_logs_file)
-                    # np.save(rmfs_path, rmf_logs)
+                    rmf_logs = np.array(nav.get_rsims_log(), dtype=object)
+                    rmf_logs_file = f"rmfs-{chunk_id}-{shared['jobs']}-{rep_route.get_route_id()}"
+                    rmfs_path = os.path.join(results_path, rmf_logs_file)
+                    np.save(rmfs_path, rmf_logs)
 
                     log['nav-name'].append(nav.get_name())
-                    log['route_id'].append(ri)
+                    log['route_id'].append(route.get_route_id())
                     log['ref_route'].append(combo.get('ref_route'))
-                    log['rep_id'].append(test_rep.get_route_id())
+                    log['rep_id'].append(rep_route.get_route_id())
                     log['sample_rate'].append(combo.get('sample_step'))
                     log['blur'].append(combo.get('blur'))
                     log['histeq'].append(combo.get('histeq'))
@@ -481,7 +466,7 @@ class Benchmark:
                     log['ah'].append(rec_headings)
                     log['rmfs_file'].append(rmf_logs_file)
                     log['matched_index'].append(matched_index)
-                    log['index_diff'].append(index_diffs)
+                    log['abs_index_diff'].append(abs_index_diffs)
                     log['dist_diff'].append(dist_diff)
                     log['errors'].append(errors)
                     log['best_sims'].append(nav.get_best_sims())

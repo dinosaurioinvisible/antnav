@@ -1,16 +1,11 @@
 import os
+import antworld
 import cv2
 import numpy as np
 from scipy.spatial.distance import cdist
 from source.imgproc import Pipeline
 from source.utils import check_for_dir_and_create, write_route, squash_deg, travel_dist, pol2cart
 from source.gencoords import generate_from_points, generate_grid
-
-try:
-    import antworld
-except ModuleNotFoundError:
-    print('first attempt to antworld import failed')
-    import bob_robotics.antworld as antworld
 
 # Old Seville data (lower res, but loads faster)
 worldpath = antworld.bob_robotics_path + "/resources/antworld/world5000_gray.bin"
@@ -119,9 +114,10 @@ class Agent:
         return (xx, yy), img
 
     def test_nav(self, coords, r=0.05, t=100, sigma=0.1, **kwargs):
+        #TODO: Here we need to initialise the progrees tracking variables. 
+        # It is not clear how that would work with the route segmentation
         # keep track of the index progress
-        # prev index is be initialised as the first index
-        # Asusmes you start the experiment near the begining of the route.
+        #TODO: prev index should be initialised as the first index
         self.prev_idx = 0
 
         self.repos_thresh = kwargs.get('repos_thresh')
@@ -148,19 +144,6 @@ class Agent:
         # Navigation loop
         for i in range(0, t):
             self.i = i
-
-            # Check for termination conditions
-            if self.check4route_end():
-                break
-
-            self.check4reposition()
-            img = self.get_img(self.xy, self.h)
-
-            # log the coordinates and attitude
-            self.traj['x'].append(self.xy[0])
-            self.traj['y'].append(self.xy[1])
-            self.traj['heading'].append(self.h)
-
             # get the new heading from teh navigator and format it properly
             new_h = self.nav.get_heading(img)
             self.h = self.h + new_h
@@ -168,6 +151,18 @@ class Agent:
 
             # reposition the agent and get the new image
             self.xy, img = self.update_position(self.xy, self.h, r)
+            self.check4reposition()
+
+            img = self.get_img(self.xy, self.h)
+            # log the coordinates and attitude
+            self.traj['x'].append(self.xy[0])
+            self.traj['y'].append(self.xy[1])
+            self.traj['heading'].append(self.h)
+
+            # Check for termination conditions
+            if self.check4route_end():
+                break
+
 
         for k in self.traj.keys():
             self.traj[k] = np.array(self.traj[k])
@@ -197,12 +192,20 @@ class Agent:
                 self.reposition(idx=idx)
                 return
             self.prev_idx = idx
-
+        # check distance form the start of the route
+        # dist = self.route.dist_from_start(self.xy)
+        # if (self.i + 1) % 10 == 0:
+        #     if dist <= self.prev_dist:
+        #         self.xy = xy
+        #         self.trial_fail_count += 1
+        #         self.nav.reset_window(idx)
+        #     self.prev_dist = dist
     def reposition(self, idx: int, idx_offset=5):
         '''
         Reposition the agent by index.
         Using the offset by default adds 5 to the index
         '''
+        # import pdb; pdb.set_trace()
         idx += idx_offset
         self.prev_idx = idx
         # check you are not near the end of the route already
@@ -251,9 +254,6 @@ class Agent:
     
     def get_tfc_indices(self):
         return self.tfc_indices
-    
-    def get_total_sim_time(self):
-        return self.i
 
 
 """

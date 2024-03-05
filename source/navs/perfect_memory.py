@@ -26,7 +26,7 @@ class PerfectMemory(Navigator):
             mem_headings.append(self.degrees[idx])
 
         # append the rsims of all window route images for that query image
-        self.logs.append(rsims)
+        #self.logs.append(rsims)
         # find best image match and heading
         index = int(self.argminmax(mem_sims))
         self.best_sims.append(mem_sims[index])
