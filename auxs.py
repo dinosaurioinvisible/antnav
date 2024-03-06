@@ -30,6 +30,7 @@ def plot_imgs(imgs,rows=0,cols=0,title='',mk_cbar=False,subtitles=[]):
             ax.title.set_text(subtitles[ei])
     if mk_cbar:
         cbar = fig.colorbar(im,location='bottom')
+    fig.tight_layout()
     plt.show()
     plt.close()
 
@@ -109,20 +110,23 @@ def load_navi_and_route(navi_type='spm',route_type='',route_id=0):
 def get_corr_xy_points(route):
     rcs = route.get_xycoords()
     qcs = route.get_qxycoords()
-    # rx,ry; qx,qy; qrxy_id, qrx,qry
-    rxy = np.zeros((rcs['x'].shape[0],3))
-    rxy[:,0] = rcs['x']
-    rxy[:,1] = rcs['y']
-    rxy[:,2] = route.get_yaw()
-    qxys = np.zeros((qcs['x'].shape[0],6))
+    # rxyo: rx, ry, ro
+    rxyo = np.zeros((rcs['x'].shape[0],3))
+    rxyo[:,0] = rcs['x']
+    rxyo[:,1] = rcs['y']
+    rxyo[:,2] = route.get_yaw()
+    # qxys: qx, qy, qxy_corr_route_id
+    qxys = np.zeros((qcs['x'].shape[0],3))
     qxys[:,0] = qcs['x']
     qxys[:,1] = qcs['y']
-    qxys[:,2] = route.route_dict['qid']
-    for i in range(qxys.shape[0]):
-        ri = route.min_dist_from_route((qxys[i][:2]))
-        qxys[i,3:] = [int(ri[0]),ri[2][0],ri[2][1]]
-    # import pdb; pdb.set_trace()
-    return rxy,qxys
+    # route id for qx,qy 
+    for qi in range(qxys.shape[0]):
+        qr_id,qr_dist,(qrx,qry) = route.min_dist_from_route(qxys[qi][:2])
+        if qrx == rxyo[qr_id][0] and qry == rxyo[qr_id][1]:
+            qxys[qi][2] = qr_id
+        else:
+            import pdb; pdb.set_trace() # just in case (never happened so far)
+    return rxyo,qxys
 
 
 # 

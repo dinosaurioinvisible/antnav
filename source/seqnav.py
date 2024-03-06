@@ -94,15 +94,43 @@ class SequentialPerfectMemory:
         self.blimit = max(0, self.mem_pointer - self.lower)
         self.flimit = min(self.route_end, self.mem_pointer + self.upper)
 
+    def get_heading_ix(self, query_img, ref_imgs):
+
+        # ref_imgs = np.array(self.route_images[self.blimit:self.flimit]) * np.where(query_img==0,0,1)
+        wrsims = rmf(query_img,list(ref_imgs))
+        # wrsims = rmf(query_img, self.route_images[self.blimit:self.flimit], self.matcher, self.deg_range, self.deg_step)
+        
+        wind_sims = []
+        wind_headings = []
+        indices = self.argminmax(wrsims, axis=1)
+        for i, idi in enumerate(indices):
+            wind_sims.append(wrsims[i, idi])
+            wind_headings.append(self.degrees[idi])
+        idx = int(round(self.argminmax(wind_sims)))
+        heading = wind_headings[idx]
+
+        self.wrsims_ix = wrsims             # rot sims among query and window images (20 x 360) 
+        self.indices = indices              # id for best sim for each query/window comp (20 x 1)
+        self.wsims = wind_sims              # sim value for each best id in window (20 x 1)
+        self.wheadings = wind_headings      # degree val for each best id (-180:180) (20 x 1)
+        self.idx = idx                      # best id from min/best val (in window sims)
+        self.heading = heading              # best val from best id (idx) (in window headings) 
+
+        return heading
+
     def get_heading(self, query_img):
         '''
         Recover the heading given a query image
         :param query_img:
         :return:
         '''
-        query_img = self.pipe.apply(query_img)
+        # commented these, because query images are already preprocessed in my case
+        # query_img = self.pipe.apply(query_img)
+        # 
         # get the rotational similarities between a query image and a window of route images
         wrsims = rmf(query_img, self.route_images[self.blimit:self.flimit], self.matcher, self.deg_range, self.deg_step)
+        self.wrsims = wrsims
+
         self.window_log.append([self.blimit, self.flimit])
         # Holds the best rot. match between the query image and route images
         wind_sims = []
