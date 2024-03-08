@@ -12,10 +12,9 @@ from source.display import *
 # when init SPP, Pipeline() is applied to route images, or only to query? # line 104 seqnav
 # 
 
-
 navi_type = 'spm'
-route_type = 'curve'
-route_id = 0
+route_type = 'basic'
+route_id = 1
 
 navi,rx,rx_imgs,qx_imgs = load_navi_and_route(navi_type=navi_type,
                                               route_type=route_type,
@@ -25,7 +24,7 @@ qims = np.array(qx_imgs)
 rxyo,qxys = get_corr_xy_points(rx)
 
 print_data = True
-plots = True
+plots = False
 
 idx,hix = 0,0
 # wblim,wflim = 0,0
@@ -34,6 +33,7 @@ dq_bl_hd,dq_fl_hd = None,None
 
 
 for ei,qxim in enumerate(qx_imgs):
+    print('\n{}/{}'.format(ei,len(qx_imgs)))
 
     if True:
         wblim = navi.blimit
@@ -42,7 +42,7 @@ for ei,qxim in enumerate(qx_imgs):
         wblim = max(0, idx-10)
         wflim = min(idx+11, ims.shape[0])
 
-    if 5 <= ei <= len(qx_imgs)-5:
+    if 5 <= ei: # <= len(qx_imgs)-5:
         ws = 3
         bfs = []
         dqs = []
@@ -68,16 +68,25 @@ for ei,qxim in enumerate(qx_imgs):
         dq_hd_sums = np.array(dq_hd_sums)
         dq_hd_min = np.min(np.abs(dq_hd_sums))
         dq_hd = int(np.where(np.abs(dq_hd_sums)==dq_hd_min)[0])
-
-        # compare against min window
+        
         dq_bl_id,dq_fl_id = bfs[dq_id]
         wsums = np.abs(np.sum(dqs[dq_id],axis=(1,2)))
         idx = dq_bl_id + int(np.where(wsums==np.min(wsums))[0])
         
         # heading
         dq_bl_hd,dq_fl_hd = bfs[dq_hd]
-        hix = navi.get_heading_ix(qxim,navi.route_images[dq_bl_hd-ws:dq_fl_hd+ws])
-        
+        # hix = navi.get_heading_ix(qxim,navi.route_images[idx-5:idx+6])
+        # print(hix)
+        hix = navi.get_heading_ix(qxim,navi.route_images[dq_bl_id-ws:dq_fl_id+ws])
+        # print(hix)
+        # hix = navi.get_heading_ix(qxim,navi.route_images[idx-2:idx+1])
+        # print(hix) 
+
+        # r0
+        # 48, 48,   48, 48, 48, 46, 
+        # 49, 42, -100, 61, 43, 48, [idx-5 : idx+6]         -> 11
+        # 49, 47, -100, 59, 42, 48, [dq_bl-3 : dq_fl+3]     -> 9 
+        # 80, 47,   37, 59, 12, 48, [idx-2 : idx+1]         -> 3
 
         # pdb.set_trace()
 
@@ -128,7 +137,7 @@ for ei,qxim in enumerate(qx_imgs):
                     'correlative img, route/mem id: {}, yaw: {}'.format(rx_id,round(rx_yaw,3)),
                     'navi match rot qx img, heading: {}'.format(heading),
                     'navi mp img, window: {}:{}, idx: {}, yaw: {}'.format(navi_blim,navi_flim,mp,round(navi_mp_yaw,3)),
-                    'ix match rot qx img, segm: {}:{}, heading: {}'.format(dq_bl_hd,dq_fl_hd,hix),
+                    'ix match rot qx img, window: {}:{}, heading: {}'.format(wblim,wflim,hix),
                     'ix mp img, segm: {}:{}, idx: {}, yaw: {}'.format(dq_bl_id,dq_fl_id,idx,round(ix_mp_yaw,3))
                     ]
             plot_imgs([qxim, rx_img,
@@ -143,4 +152,4 @@ for ei,qxim in enumerate(qx_imgs):
         wblim = navi.blimit
         wflim = navi.flimit
 
-        # pdb.set_trace()
+        pdb.set_trace()
