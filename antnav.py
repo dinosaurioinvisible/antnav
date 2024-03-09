@@ -89,7 +89,7 @@ def test(navi,qims,route, perfect_window=False, plot_xhs=False):
 # navi, xh,uxh,nxh, xi,uxi,nxi = test(navi,qims,route)
 
 # TODO: run exps and save data in dataframe or whatever
-for ri in range(7):
+# for ri in range(7):
     navi, route, ims, qims = load_navi_and_route(navi_type= 'seq2seq',
                                             route_type= 'basic',
                                             route_id = ri)
