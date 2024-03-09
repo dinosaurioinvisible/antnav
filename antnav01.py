@@ -285,7 +285,22 @@ def plot_anim_v1(imgs,start,stop):
     ani = animation.FuncAnimation(fig,update_fig,interval=500,blit=True,repeat=True)
     plt.show()
 
-
+# update mem window using sequences
+    def mk_mem_window(self):
+        ims = np.array(self.route_images)
+        pb,px,pf = self.idxs[-3:]
+        pv_ims = ims[np.array([pb,px,pf])]
+        dx = 2
+        wids = np.array([(pb+px)/2-dx,(pb+px)/2+dx,(px+pf)/2-2,(px+pf)/2+2,pf+2,pf+5]).astype(int)
+        wsums = np.zeros((4,3))
+        wabsums = np.zeros((4,3))
+        subids = []
+        for i in range(4):
+            wsums[i] = np.sum(ims[wids[i:i+3]] - pv_ims,axis=(1,2))
+            wabsums[i] = np.sum(np.abs(ims[wids[i:i+3]] - pv_ims),axis=(1,2))
+            subids.append((wids[i:i+3]))
+        import pdb; pdb.set_trace()
+        return abwindow,window
 
 
 

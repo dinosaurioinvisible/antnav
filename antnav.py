@@ -1,155 +1,90 @@
 
 import numpy as np
-from copy import deepcopy
 from auxs import *
 from tqdm import tqdm
-from source.utils import *
-import pdb
+from source.utils import display_image, animated_window, plot_map, squash_deg, rotate
+from source.display import plot_3d, plot_route
+from pdb import set_trace as pbx
 import matplotlib.pyplot as plt
-from source.display import *
 
-# questions:
-# when init SPP, Pipeline() is applied to route images, or only to query? # line 104 seqnav
-# 
+# doubts:
+# spm gets 3 ids & 22 headings mismatches, but seq2seq gets 11 ids & 49 hds? (r0)
+# similar for other routes it seems, maybe is the preprocessing?
 
-navi_type = 'spm'
-route_type = 'basic'
-route_id = 1
+# navi + rxyo, qxys; rx and qx imgs as tensor arrays
+# navi types: 'spm' or 'seq2seq'
+navi, route, ims, qims = load_navi_and_route(navi_type= 'seq2seq',
+                                            route_type= 'basic',
+                                            route_id = 0)
 
-navi,rx,rx_imgs,qx_imgs = load_navi_and_route(navi_type=navi_type,
-                                              route_type=route_type,
-                                              route_id=route_id)
-ims = np.array(rx_imgs)
-qims = np.array(qx_imgs)
-rxyo,qxys = get_corr_xy_points(rx)
+def test(navi,qims, perfect_window=False, plot_xhs=False):
+    # lists for mismatches
+    msm_nxi,msm_nxh = [],[]
+    msm_uxi,msm_uxh = [],[]
 
-print_data = True
-plots = False
-
-idx,hix = 0,0
-# wblim,wflim = 0,0
-dq_bl_id,dq_fl_id = None,None
-dq_bl_hd,dq_fl_hd = None,None
-
-
-for ei,qxim in enumerate(qx_imgs):
-    print('\n{}/{}'.format(ei,len(qx_imgs)))
-
-    if True:
-        wblim = navi.blimit
-        wflim = navi.flimit
-    else: 
-        wblim = max(0, idx-10)
-        wflim = min(idx+11, ims.shape[0])
-
-    if 5 <= ei: # <= len(qx_imgs)-5:
-        ws = 3
-        bfs = []
-        dqs = []
-        dq_id_sums = []
-        dq_hd_sums = []
-        qw = qims[ei-ws+1:ei+1]
-        rw = ims[wblim:wflim]
-        for wi in range(wflim-wblim+1):
-            # rwi = ims[navi.blimit+wi:navi.blimit+wi+3]
-            rwi = ims[wblim+wi:wblim+wi+ws]
-            dq = rwi - qw
-            # bfs.append((navi.blimit+wi,navi.blimit+wi+3))
-            bfs.append((wblim+wi,wblim+wi+ws))
-            dqs.append(dq)
-            dq_id_sums.append(np.sum(dq))
-            dq_hd_sums.append(np.sum(np.abs(dq)))
-        
-        dqs = np.array(dqs)
-        dq_id_sums = np.array(dq_id_sums)
-        dq_id_min = np.min(np.abs(dq_id_sums))
-        dq_id = int(np.where(np.abs(dq_id_sums)==dq_id_min)[0])
-
-        dq_hd_sums = np.array(dq_hd_sums)
-        dq_hd_min = np.min(np.abs(dq_hd_sums))
-        dq_hd = int(np.where(np.abs(dq_hd_sums)==dq_hd_min)[0])
-        
-        dq_bl_id,dq_fl_id = bfs[dq_id]
-        wsums = np.abs(np.sum(dqs[dq_id],axis=(1,2)))
-        idx = dq_bl_id + int(np.where(wsums==np.min(wsums))[0])
-        
-        # heading
-        dq_bl_hd,dq_fl_hd = bfs[dq_hd]
-        # hix = navi.get_heading_ix(qxim,navi.route_images[idx-5:idx+6])
-        # print(hix)
-        hix = navi.get_heading_ix(qxim,navi.route_images[dq_bl_id-ws:dq_fl_id+ws])
-        # print(hix)
-        # hix = navi.get_heading_ix(qxim,navi.route_images[idx-2:idx+1])
-        # print(hix) 
-
-        # r0
-        # 48, 48,   48, 48, 48, 46, 
-        # 49, 42, -100, 61, 43, 48, [idx-5 : idx+6]         -> 11
-        # 49, 47, -100, 59, 42, 48, [dq_bl-3 : dq_fl+3]     -> 9 
-        # 80, 47,   37, 59, 12, 48, [idx-2 : idx+1]         -> 3
-
-        # pdb.set_trace()
-
-    # save window
-    navi_blim = navi.blimit
-    navi_flim = navi.flimit
-    # correlative route/mem img
-    rx_id = int(qxys[ei][2])
-    rx_yaw = rxyo[rx_id][2]
-    rx_img = rx_imgs[rx_id]
-    # get heading and mp idx
-    heading = navi.get_heading(qxim)
-    mp = navi.mem_pointer
-    # navi matching heading query img
-    navi_qx_img = rotate(heading,qxim)
-    # navi mem pointer img
-    navi_mp_yaw = rxyo[mp][2]
-    navi_mp_img = rx_imgs[mp]
-    # ix matching heading query img
-    ix_qx_img = rotate(hix,qxim)
-    # ix mem pointer img
-    ix_mp_yaw = rxyo[idx][2]
-    ix_mp_img = rx_imgs[idx]
-
-    if print_data:
+    for qid,qim in enumerate(qims):
         print()
-        print(ei)
-        print('id pointer: navi = {}, route = {}, ix = {}'.format(mp,rx_id,idx))
-        print('headings: navi = {}, route = {}, ix = {}'.format(heading,round(rx_yaw,3),hix))
-        print('navi window: {}:{}, ix id window: {}:{}, ix heading window: {}:{}'.format(navi_blim,navi_flim,dq_bl_id,dq_fl_id,dq_bl_hd,dq_fl_hd))
+        print(qid)
 
-    # pdb.set_trace()
+        rid = int(navi.qxys[qid][2])
+        rhx = int(navi.rxyo[rid][2])
+        if perfect_window==True or abs(navi.mem_pointer-rid) >= navi.window:
+            navi.reset_window(rid)
+        navi_hx = navi.get_heading(qim)
+        navi_mp = navi.mem_pointer
+        
+        if qid >= 2:
+            if perfect_window:
+                navi.reset_window(rid)
+            if qid <= 2:
+                navi.window_blim = navi.blimit
+                navi.window_flim = navi.flimit
+            else:
+                wbl,wfl = navi.mk_mem_window(qim)
+                print('window: {}:{}, navi window: {}:{}'.format(wbl,wfl,navi.blimit,navi.flimit))
+            
+            query_seq = qims[qid-2:qid+1]
+            ix_mp, ix_hx = navi.get_heading_ix(query_seq)
+            navi.append_data(qid)
+            
+            print(rid,navi_mp,ix_mp)
+            print(rhx,navi_hx,ix_hx)
 
-    # if True:
-    # if np.abs(heading-rx_yaw)>20 or np.abs(mp-rx_id)>10: # or np.abs(idx-rx_id)>10 or np.abs(hix-rx_heading)>20:
-    if np.abs(mp - rx_id) > 10: # or (ei > 5 and np.abs(idx - rx_id) > 10):
-        print('\nid mismatch\n')
-        print(ei)
-        print('id pointer: navi = {}, route = {}, ix = {}'.format(mp,rx_id,idx))
-        print('headings: navi = {}, route = {}, ix = {}'.format(heading,round(rx_yaw,3),hix))
-        print('navi window: {}:{}, ix id window: {}:{}, ix heading window: {}:{}'.format(navi_blim,navi_flim,dq_bl_id,dq_fl_id,dq_bl_hd,dq_fl_hd))
-        if plots:
-            # query img & route correct img & yaw
-            # navi rotated query img, navi mp idx & yaw
-            # ix rotated query img, ix mp idx img & yaw
-            subs = [
-                    'query img: {}, route/mem id: {}, heading: {}'.format(ei,rx_id,0),
-                    'correlative img, route/mem id: {}, yaw: {}'.format(rx_id,round(rx_yaw,3)),
-                    'navi match rot qx img, heading: {}'.format(heading),
-                    'navi mp img, window: {}:{}, idx: {}, yaw: {}'.format(navi_blim,navi_flim,mp,round(navi_mp_yaw,3)),
-                    'ix match rot qx img, window: {}:{}, heading: {}'.format(wblim,wflim,hix),
-                    'ix mp img, segm: {}:{}, idx: {}, yaw: {}'.format(dq_bl_id,dq_fl_id,idx,round(ix_mp_yaw,3))
-                    ]
-            plot_imgs([qxim, rx_img,
-                    navi_qx_img, navi_mp_img,
-                    ix_qx_img, ix_mp_img],
-                    rows=3,cols=2,
-                    subtitles=subs)
-            # plot_3d(navi.wrsims)
-            # plot_3d(navi.wrsims_ix)
-        # reset pointer
-        navi.update_mid_pointer(rx_id - navi.blimit)
-        wblim = navi.blimit
-        wflim = navi.flimit
+            if abs(rid-navi_mp) >= 10: 
+                msm_nxi.append([qid,rid,navi_mp,ix_mp,rhx,navi_hx,ix_hx])
+            if abs(rhx-navi_hx) > 10:
+                msm_nxh.append([qid,rid,navi_mp,ix_mp,rhx,navi_hx,ix_hx])
+            if abs(rid-ix_mp) >= 10: 
+                msm_uxi.append([qid,rid,navi_mp,ix_mp,rhx,navi_hx,ix_hx])
+            if abs(rhx-ix_hx) > 10:
+                msm_uxh.append([qid,rid,navi_mp,ix_mp,rhx,navi_hx,ix_hx])
 
-        pdb.set_trace()
+    print('\nnavi msms: ids: {}, hds: {}, ix msms: ids: {}, hds: {}\n'.format(len(msm_nxi),len(msm_nxh),len(msm_uxi),len(msm_uxh)))
+
+    # mismatching headings; xh: common, uxh: only integrated, nxh: only navigator
+    xh = np.array([hx for hx in msm_uxh if hx[0] in np.array(msm_nxh)[:,0]])
+    uxh = np.array([ux for ux in msm_uxh if ux[0] not in np.array(msm_nxh)[:,0]])
+    nxh = np.array([nx for nx in msm_nxh if nx[0] not in np.array(msm_uxh)[:,0]])
+    # normally few mismatching ids for perfect mem windows (for tests)
+    # xh: common, uxi: integrated (maybe also in nxi), nxi: navi (maybe also in uxi)
+    xi = np.array([x for x in msm_uxi if x[0] in np.array(msm_nxi)[:,0]])
+    uxi = np.array(msm_uxi)
+    nxi = np.array(msm_nxi)
+
+    if plot_xhs:
+        print()
+        for ux in uxh:
+            print('qx id {}, rx id: {}, navi id: {}, idx: {}, rx yaw: {}, navi hx: {}, ix hx: {}'.format(*zip(ux)))
+            if abs(ux[4] - ux[6]) > 20:
+                print('\nlarge heading/yaw difference\n')
+                idx_yaw = navi.rxyo[ux[3]][2]
+                plot_imgs([qims[ux[0]], ims[ux[1]], rotate(ux[6],qims[ux[0]]), ims[ux[3]]],
+                        subtitles = ['query img, id: {}'.format(ux[0]),
+                                    'route corr img, id: {}, yaw: {}'.format(ux[1],ux[4]),
+                                    'rotated query img, heading: {}'.format(ux[6]),
+                                    'chosen mem img, id: {}, yaw: {}'.format(ux[3],int(idx_yaw))])
+    
+    return navi, xh,uxh,nxh, xi,uxi,nxi
+
+navi, xh,uxh,nxh, xi,uxi,nxi = test(navi,qims)
+plot_route(route.route_dict,traj=navi.route_data)

@@ -84,6 +84,7 @@ def plot_routes(rxy,qxy,cxyos=[],gxyos=[],title=''):
     plt.show()
     plt.close()
 
+# quick load of all the basics
 def load_navi_and_route(navi_type='spm',route_type='',route_id=0):
     dirpath = os.path.abspath(os.path.join(os.getcwd(),'..','antworld_data'))
     if route_type == 'basic':
@@ -93,20 +94,44 @@ def load_navi_and_route(navi_type='spm',route_type='',route_id=0):
     elif route_type == 'curve':
         rx_path = os.path.join(dirpath,'curve-bins')
     gpath = os.path.join(dirpath,'grid70')
-    rx = load_routes(rx_path,[route_id],grid_path=gpath)[0]
+    route = load_routes(rx_path,[route_id],grid_path=gpath)[0]
     pp_settings = {}
     pp_settings['shape'] = (360,80)
     pp_settings['blur'] = True
     pipeline = Pipeline(**pp_settings)
-    rx_imgs = pipeline.apply(rx.get_imgs())
-    qx_imgs = pipeline.apply(rx.get_qimgs())
+    rx_imgs = pipeline.apply(route.get_imgs())
+    qx_imgs = pipeline.apply(route.get_qimgs())
     if navi_type == 'spm':
         navi = spm.SequentialPerfectMemory(rx_imgs,'mae')
-    elif navi_type == 's2s':
+    elif navi_type == 'seq2seq':
         navi = spm.Seq2SeqPerfectMemory(rx_imgs,'mae')
-    return navi,rx,rx_imgs,qx_imgs
+    navi.mk_corr_qr_points(route)
+    return navi,route,np.array(rx_imgs),np.array(qx_imgs)
 
+# test local rdf (within window from navi) vs global rdf
+def test_global(navi,query_img,qx_id):
+    rx_id = int(navi.qxys[qx_id][2])
+    rx_yaw = navi.rxyo[rx_id][2]
+    navi.mem_pointer = rx_id
+    navi.blimit = max(0,rx_id-10)
+    navi.flimit = min(navi.blimit+navi.window,len(navi.route_images))
+    navi_heading = navi.get_heading(query_img)
+    glob_heading, glob_id = navi.global_loc(query_img)
+    print('\nqx id: {}'.format(qx_id))
+    print('qxim rx id: {}, query-route yaw: {}'.format(rx_id,rx_yaw))
+    print('navi mp id: {}, navi mp heading: {}'.format(navi.mem_pointer, navi_heading))
+    print('glob mp id: {}, glob mp heading: {}'.format(glob_heading, glob_id))
+    if np.abs(rx_id-glob_id) > 5 or np.abs(rx_yaw-glob_heading) > 10:
+        plot_imgs([query_img,
+                   navi.route_images[rx_id],
+                   navi.route_images[navi.mem_pointer],
+                   navi.route_images[glob_id]],
+                   subtitles = ['query img, id: {}, yaw: {}'.format(qx_id,0),
+                                'route img, id: {}, yaw: {}'.format(rx_id,rx_yaw),
+                                'navi id: {}, navi heading: {}'.format(navi.mem_pointer,navi_heading),
+                                'global id: {}, global heading: {}'.format(glob_id,glob_heading)])
 
+# now in seqnav class
 def get_corr_xy_points(route):
     rcs = route.get_xycoords()
     qcs = route.get_qxycoords()

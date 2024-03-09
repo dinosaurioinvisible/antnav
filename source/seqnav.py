@@ -1,4 +1,4 @@
-from source.utils import pick_im_matcher, dot_dist, mae, rmse, cor_dist, rmf, seq2seqrmf, pair_rmf, cos_sim, mean_angle
+from source.utils import pick_im_matcher, dot_dist, mae, rmse, cor_dist, rmf, seq2seqrmf, pair_rmf, cos_sim, mean_angle, rotate
 from source.analysis import d2i_rmfs_eval
 import numpy as np
 import copy
@@ -76,6 +76,8 @@ class SequentialPerfectMemory:
 
         # choose pointer update function/criterion
         # TODO:
+        self.idx = 0
+        self.hix = 0
     
     #TODO Need a better name for this function
     def reset_window(self, pointer):
@@ -94,29 +96,97 @@ class SequentialPerfectMemory:
         self.blimit = max(0, self.mem_pointer - self.lower)
         self.flimit = min(self.route_end, self.mem_pointer + self.upper)
 
-    def get_heading_ix(self, query_img, ref_imgs):
+    # get correlated query to route points, for testing
+    def mk_corr_qr_points(self, route):
+        # rxyo: rx, ry, r yaw
+        self.rxyo = np.zeros((len(self.route_images),3))
+        self.rxyo[:,0] = route.route_dict['x']
+        self.rxyo[:,1] = route.route_dict['y']
+        self.rxyo[:,2] = route.route_dict['yaw']
+        # qxys: qx, qy, query correlative route id
+        self.qxys = np.zeros((len(route.route_dict['qimgs']),3))
+        self.qxys[:,0]  = route.route_dict['qx']
+        self.qxys[:,1]  = route.route_dict['qy']
+        for qi in range(self.qxys.shape[0]):
+            qr_id, qr_dist, (qrx,qry) = route.min_dist_from_route(self.qxys[qi][:2])
+            self.qxys[qi][2] = qr_id
 
-        # ref_imgs = np.array(self.route_images[self.blimit:self.flimit]) * np.where(query_img==0,0,1)
-        wrsims = rmf(query_img,list(ref_imgs))
-        # wrsims = rmf(query_img, self.route_images[self.blimit:self.flimit], self.matcher, self.deg_range, self.deg_step)
+    # kind of rdf over the whole img set, for testing
+    # basically a quick benchmark when without memory window
+    def global_loc(self, query_img):
+        rot_vals,rot_ids = np.zeros(360),np.zeros(360)
+        for di in range(360):
+            ir_difs = self.route_images - rotate(di,query_img)
+            ir_sums = np.sum(np.abs(ir_difs),axis=(1,2))
+            ir_id = np.where(ir_sums==np.min(ir_sums))[0][0]    # may be more than one, very rare
+            rot_vals[di] = np.min(ir_sums)
+            rot_ids[di] = ir_id
+        heading = int(np.where(rot_vals==np.min(rot_vals))[0])  # min -> heading
+        heading_id = rot_ids[heading]                           # best heading -> id
+        return heading,heading_id
+    
+    # get id using a sequence of query images
+    def get_heading_ix(self, query_seq):
+        wsize = query_seq.shape[0]        # sliding tensor window size = query seq
+        subw_lims = []
+        qr_difs = []
+        qr_sums = []        
+        window_flim = min(self.flimit-wsize,len(self.route_images)-wsize)
+        for wi in range(self.blimit,window_flim):
+            rx_ims = self.route_images[wi:wi+wsize]                             # route mem img seq
+            qr_dif = rx_ims - query_seq                                         # mem qx difference
+            subw_lims.append((wi,wi+wsize))
+            qr_difs.append(qr_dif)
+            qr_sums.append(np.sum(qr_dif))
+
+        qr_min = np.min(np.abs(qr_sums))                            # minima (intensity wise)
+        qr_id = int(np.where(np.abs(qr_sums)==qr_min)[0])           # min id
+        subw_blim, subw_flim = subw_lims[qr_id]                     # sub window limits
+        subw_sums = np.abs(np.sum(qr_difs[qr_id],axis=(1,2)))       # kind of recurs, to get id within subw
+        subw_idx = int(np.where(subw_sums==np.min(subw_sums))[0])   # min within sub window
+        self.idx = subw_blim + subw_idx                             # update mem pointer ix
+
+        # subw_absums = np.sum(np.abs(qr_difs[qr_id]),axis=(1,2))     # subw sums for heading
+        # hx_id = self.argminmax(subw_absums)                         # min 
+        # self.hix = self.get_heading_ix(query_seq[hx_id],self.route_images[max(0,subw_blim-wsize):subw_flim+wsize])
         
+        wrsims = seq2seqrmf(query_seq, self.route_images[max(0,subw_blim-wsize):subw_flim+wsize])
         wind_sims = []
         wind_headings = []
         indices = self.argminmax(wrsims, axis=1)
         for i, idi in enumerate(indices):
             wind_sims.append(wrsims[i, idi])
             wind_headings.append(self.degrees[idi])
-        idx = int(round(self.argminmax(wind_sims)))
-        heading = wind_headings[idx]
+        hd_id = int(round(self.argminmax(wind_sims)))
+        self.hix = wind_headings[hd_id]
+        
+        return self.idx,self.hix
 
-        self.wrsims_ix = wrsims             # rot sims among query and window images (20 x 360) 
-        self.indices = indices              # id for best sim for each query/window comp (20 x 1)
-        self.wsims = wind_sims              # sim value for each best id in window (20 x 1)
-        self.wheadings = wind_headings      # degree val for each best id (-180:180) (20 x 1)
-        self.idx = idx                      # best id from min/best val (in window sims)
-        self.heading = heading              # best val from best id (idx) (in window headings) 
+        
+    # get heading using a sequence of 3 query imgs
+    # def get_heading_ixv0(self, query_img, ref_imgs=[]):
+    #     if len(ref_imgs) == 0:
+    #         ref_imgs = self.route_images[self.blimit:self.flimit]
+    #     wrsims = rmf(query_img,ref_imgs, self.matcher, self.deg_range, self.deg_step)
+    #     wind_sims = []
+    #     wind_headings = []
+    #     indices = self.argminmax(wrsims, axis=1)
+    #     for i, idi in enumerate(indices):
+    #         wind_sims.append(wrsims[i, idi])
+    #         wind_headings.append(self.degrees[idi])
+    #     idx = int(round(self.argminmax(wind_sims)))
+    #     heading = wind_headings[idx]
+    #     mpx = self.blimit + idx
+        
+    #     # for testing 
+    #     self.wrsims = wrsims                # rot sims among query and window images (20 x 360) 
+    #     self.indices = indices              # id for best sim for each query/window comp (20 x 1)
+    #     self.wsims = wind_sims              # sim value for each best id in window (20 x 1)
+    #     self.wheadings = wind_headings      # degree val for each best id (-180:180) (20 x 1)
+    #     self.idx = idx                      # best id from min/best val (in window sims)
+    #     self.heading = heading              # best val from best id (idx) (in window headings) 
 
-        return heading
+    #     return heading
 
     def get_heading(self, query_img):
         '''
@@ -129,8 +199,6 @@ class SequentialPerfectMemory:
         # 
         # get the rotational similarities between a query image and a window of route images
         wrsims = rmf(query_img, self.route_images[self.blimit:self.flimit], self.matcher, self.deg_range, self.deg_step)
-        self.wrsims = wrsims
-
         self.window_log.append([self.blimit, self.flimit])
         # Holds the best rot. match between the query image and route images
         wind_sims = []
@@ -421,6 +489,7 @@ class Seq2SeqPerfectMemory:
         self.degrees = np.arange(*deg_range)
         self.queue_size = queue_size
         self.queue = deque(maxlen=queue_size)
+        self.matcher = pick_im_matcher(matching)
         # if the dot product distance is used we need to make sure the images are standardized
         if self.matcher == dot_dist:
             self.pipe = Pipeline(normstd=True)
@@ -428,6 +497,12 @@ class Seq2SeqPerfectMemory:
         else: 
             self.pipe = Pipeline()
 
+        # for ix fxs
+        self.idx = 0    # mem pointer
+        self.hix = 0    # heading
+        self.idxs = []
+        self.hixs = []
+        self.route_data = dict.fromkeys(['x','y','heading','mp'],np.array([]))
 
         # Log Variables
         self.recovered_heading = []
@@ -440,7 +515,6 @@ class Seq2SeqPerfectMemory:
         self.window_headings = []
         self.CMA = []
         # Matching variables
-        self.matcher = pick_im_matcher(matching)
         self.argminmax = np.argmin
         self.prev_match = 0.0
 
@@ -471,6 +545,7 @@ class Seq2SeqPerfectMemory:
         self.mem_pointer = pointer
         self.flimit = self.mem_pointer + self.upper
         self.blimit = self.mem_pointer - self.lower
+        # self.window_blim = self.blimit # to avoid bias on the end of routes
 
         if self.flimit > self.route_end:
             self.mem_pointer = (self.route_end - self.window) + self.lower
@@ -480,6 +555,125 @@ class Seq2SeqPerfectMemory:
             self.mem_pointer = self.lower
             self.blimit = 0
             self.flimit = self.mem_pointer + self.window
+            # self.window_blim = self.blimit # same
+
+    # get correlated query to route points, for testing
+    def mk_corr_qr_points(self, route):
+        # rxyo: rx, ry, r yaw
+        self.rxyo = np.zeros((len(self.route_images),3))
+        self.rxyo[:,0] = route.route_dict['x']
+        self.rxyo[:,1] = route.route_dict['y']
+        self.rxyo[:,2] = route.route_dict['yaw']
+        # qxys: qx, qy, query correlative route id
+        self.qxys = np.zeros((len(route.route_dict['qimgs']),3))
+        self.qxys[:,0]  = route.route_dict['qx']
+        self.qxys[:,1]  = route.route_dict['qy']
+        for qi in range(self.qxys.shape[0]):
+            qr_id, qr_dist, (qrx,qry) = route.min_dist_from_route(self.qxys[qi][:2])
+            self.qxys[qi][2] = qr_id
+
+    def append_data(self,qx_id):
+        qx,qy = self.qxys[qx_id][:2]
+        self.route_data['x'] = np.append(self.route_data['x'],qx)
+        self.route_data['y'] = np.append(self.route_data['y'],qy)
+        self.route_data['heading'] = np.append(self.route_data['heading'],self.hix)
+        self.route_data['mp'] = np.append(self.route_data['mp'],self.idx)
+
+    # if global, kind of rdf over the whole img set, for testing
+    # basically a quick benchmark when without memory window
+    def get_aprox_location(self, query_img, bl=0, fl=0):
+        rot_vals,rot_ids = np.zeros(360),np.zeros(360)
+        ims = self.route_images if bl+fl==0 else self.route_images[bl:fl]
+        for di in range(360):
+            ir_difs = ims - rotate(di,query_img)
+            ir_sums = np.sum(np.abs(ir_difs),axis=(1,2))
+            ir_id = np.where(ir_sums==np.min(ir_sums))[0][0]    # may be more than one, very rare
+            rot_vals[di] = np.min(ir_sums)
+            rot_ids[di] = ir_id
+        heading = int(np.where(rot_vals==np.min(rot_vals))[0])  # min -> heading
+        heading_id = bl + int(rot_ids[heading])                 # best heading -> id
+        return heading, heading_id
+    
+    # TODO: this is really difficult, nothings seems to capture invariance well
+    def segment_memory(self):
+        ims = np.array(self.route_images)
+        im_txs = ims[:-1] - ims[1:]                         # txs diffs
+        iix = ims * 0 + 1
+        for i in range(1,ims.shape[0]):
+            dxi = np.abs(ims[i] - ims[i-1])                 # only if dif > previous dif
+            iix[i] = np.where(dxi > iix[i-1], dxi, 0)       # min form of attention
+        iix = iix[1:]                                       # only txs
+        ux = iix/255                                        # norm, sort of weights also
+        imxs = np.where(np.abs(im_txs) * iix > ux, im_txs, 0)
+        return imxs
+    
+    # get id and heading using a sequence of query images
+    def get_heading_ix(self, query_seq):
+        wsize = query_seq.shape[0]        # sliding tensor window size = query seq
+        subw_lims = []
+        qr_difs = []
+        qr_sums = []        
+        # window_flim = min(self.flimit-wsize,len(self.route_images)-wsize)
+        window_flim = min(self.window_flim-wsize,len(self.route_images)-wsize)
+        for wi in range(self.window_blim,window_flim):
+            rx_ims = self.route_images[wi:wi+wsize]                             # route mem img seq
+            qr_dif = rx_ims - query_seq                                         # mem qx difference
+            subw_lims.append((wi,wi+wsize))
+            qr_difs.append(qr_dif)
+            qr_sums.append(np.sum(qr_dif))
+
+        qr_min = np.min(np.abs(qr_sums))                            # minima (intensity wise)
+        qr_id = int(np.where(np.abs(qr_sums)==qr_min)[0])           # min id
+        subw_blim, subw_flim = subw_lims[qr_id]                     # sub window limits
+        subw_sums = np.abs(np.sum(qr_difs[qr_id],axis=(1,2)))       # kind of recurs, to get id within subw
+        subw_idx = int(np.where(subw_sums==np.min(subw_sums))[0])   # min within sub window
+        self.idx = subw_blim + subw_idx                            # update mem pointer ix
+
+        # import pdb; pdb.set_trace()
+        # subw_absums = np.sum(np.abs(qr_difs[qr_id]),axis=(1,2))     # subw sums for heading
+        # hx_id = self.argminmax(subw_absums)                         # min 
+        # self.hix = self.get_heading_ix(query_seq[hx_id],self.route_images[max(0,subw_blim-wsize):subw_flim+wsize])
+        
+        wrsims = seq2seqrmf(query_seq, self.route_images[max(0,subw_blim-wsize):subw_flim+wsize])
+        wind_sims = []
+        wind_headings = []
+        indices = self.argminmax(wrsims, axis=1)
+        for i, idi in enumerate(indices):
+            wind_sims.append(wrsims[i, idi])
+            wind_headings.append(self.degrees[idi])
+        heading_id = int(round(self.argminmax(wind_sims)))
+        self.hix = wind_headings[heading_id]%360
+        
+        self.idxs.append(self.idx)
+        self.hixs.append(self.hix)
+        return self.idx,self.hix
+    
+    # update mem window using query img + mem pointer
+    def mk_mem_window(self,qim):
+        flw = self.window_flim + 10
+        blw = self.window_blim
+        hx, hx_id = self.get_aprox_location(qim,bl=blw,fl=flw)
+        print(hx_id,self.idx)
+        idb,idf = min(hx_id,self.idx), max(hx_id,self.idx)
+        # idf will be almost always very near the center
+        self.window_flim = min(idf+11,len(self.route_images)-1) if idb > 0 else idf + self.window
+        self.window_blim = max(0,self.window_flim - self.window)
+        
+        return self.window_blim,self.window_flim
+    
+    # TODO: quick clean for difficult obstructions
+    def remk_obstructions(self,threshold=1000):
+        ims = np.array(self.route_images)
+        iix = ims[:-1] - ims[1:]
+        osums = np.sums(np.abs(iix),axis=(1,2))/1000
+        ob_txs = np.where(osums>threshold)[0]
+        ob_seqs = []
+        for i in range(osums.shape[0]-3):
+            if np.sum(osums[i:i+3]) > threshold * 3:
+                ob_seqs.append([i,i+3])
+        ob_seqs = np.array(ob_seqs)
+
+
 
     def get_heading(self, query_img):
         '''
@@ -514,7 +708,7 @@ class Seq2SeqPerfectMemory:
         # because now the window sims are the size of current queque * window 
         idx = int(self.argminmax(wind_sims) % self.window)
         self.best_sims.append(wind_sims[idx])
-        heading = wind_headings[idx]
+        heading = wind_headings[idx]%360
         self.recovered_heading.append(heading)
 
         # log the memory pointer before the update
