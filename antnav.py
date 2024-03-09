@@ -17,7 +17,7 @@ navi, route, ims, qims = load_navi_and_route(navi_type= 'seq2seq',
                                             route_type= 'basic',
                                             route_id = 0)
 
-def test(navi,qims, perfect_window=False, plot_xhs=False):
+def test(navi,qims,route, perfect_window=False, plot_xhs=False):
     # lists for mismatches
     msm_nxi,msm_nxh = [],[]
     msm_uxi,msm_uxh = [],[]
@@ -83,8 +83,14 @@ def test(navi,qims, perfect_window=False, plot_xhs=False):
                                     'route corr img, id: {}, yaw: {}'.format(ux[1],ux[4]),
                                     'rotated query img, heading: {}'.format(ux[6]),
                                     'chosen mem img, id: {}, yaw: {}'.format(ux[3],int(idx_yaw))])
-    
-    return navi, xh,uxh,nxh, xi,uxi,nxi
+    plot_route(route.route_dict,traj=navi.route_data)
 
-navi, xh,uxh,nxh, xi,uxi,nxi = test(navi,qims)
-plot_route(route.route_dict,traj=navi.route_data)
+    return navi, xh,uxh,nxh, xi,uxi,nxi
+# navi, xh,uxh,nxh, xi,uxi,nxi = test(navi,qims,route)
+
+# TODO: run exps and save data in dataframe or whatever
+for ri in range(7):
+    navi, route, ims, qims = load_navi_and_route(navi_type= 'seq2seq',
+                                            route_type= 'basic',
+                                            route_id = ri)
+    navi, xh,uxh,nxh, xi,uxi,nxi = test(navi,qims,route)
