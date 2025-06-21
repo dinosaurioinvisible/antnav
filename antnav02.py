@@ -8,7 +8,7 @@ from tqdm import tqdm
 from source.utils import *
 from source.imgproc import * 
 from source.routedatabase import Route,load_routes
-import source.seqnav as spm
+import source.seqnav02 as spm
 import pdb
 import matplotlib.pyplot as plt
 

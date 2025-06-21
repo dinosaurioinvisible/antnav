@@ -302,7 +302,28 @@ def plot_anim_v1(imgs,start,stop):
         import pdb; pdb.set_trace()
         return abwindow,window
 
-
+# test local rdf (within window from navi) vs global rdf
+def test_global(navi,query_img,qx_id):
+    rx_id = int(navi.qxys[qx_id][2])
+    rx_yaw = navi.rxyo[rx_id][2]
+    navi.mem_pointer = rx_id
+    navi.blimit = max(0,rx_id-10)
+    navi.flimit = min(navi.blimit+navi.window,len(navi.route_images))
+    navi_heading = navi.get_heading(query_img)
+    glob_heading, glob_id = navi.global_loc(query_img)
+    print('\nqx id: {}'.format(qx_id))
+    print('qxim rx id: {}, query-route yaw: {}'.format(rx_id,rx_yaw))
+    print('navi mp id: {}, navi mp heading: {}'.format(navi.mem_pointer, navi_heading))
+    print('glob mp id: {}, glob mp heading: {}'.format(glob_heading, glob_id))
+    if np.abs(rx_id-glob_id) > 5 or np.abs(rx_yaw-glob_heading) > 10:
+        plot_imgs([query_img,
+                   navi.route_images[rx_id],
+                   navi.route_images[navi.mem_pointer],
+                   navi.route_images[glob_id]],
+                   subtitles = ['query img, id: {}, yaw: {}'.format(qx_id,0),
+                                'route img, id: {}, yaw: {}'.format(rx_id,rx_yaw),
+                                'navi id: {}, navi heading: {}'.format(navi.mem_pointer,navi_heading),
+                                'global id: {}, global heading: {}'.format(glob_id,glob_heading)])
 
 
 

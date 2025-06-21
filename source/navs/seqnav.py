@@ -1,9 +1,10 @@
-from source.utils import pick_im_matcher, mae, rmse, dot_dist, cor_dist, rmf, seq2seqrmf, pair_rmf, cos_sim, mean_angle
+from source.utils import rotate, mae, rmse, dot_dist, cor_dist, rmf, seq2seqrmf, pair_rmf, cos_sim, mean_angle
 from source.analysis import d2i_rmfs_eval
 import numpy as np
-import copy
+from scipy.stats import norm
 from collections import deque
 from .navs import Navigator
+from .utils import p_heading
 from source.imgproc import Pipeline
 
 
@@ -58,6 +59,9 @@ class SequentialPerfectMemory(Navigator):
             self.lower = 0
         self.blimit = 0
         self.flimit = self.window
+        # mu = 0
+        # sig = 1
+        # self.gauss_rv = norm(loc=mu, scale=sig)
 
         # Adaptive window parameters
         self.dynamic_range = dynamic_range
@@ -111,14 +115,18 @@ class SequentialPerfectMemory(Navigator):
         self.window_headings.append(wind_headings)
         # append the rsims of all window route images for that query image
         self.logs.append(wrsims)
+
+        # weight the window ridf minima by a pdf
+        # x = np.linspace(norm.ppf(0.01),norm.ppf(0.99), len(wind_sims))
+        # weights = 1 - self.gauss_rv.pdf(x)
+        # wind_sims = weights * wind_sims
         # find best image match and heading
         idx = int(round(self.argminmax(wind_sims)))
         self.best_sims.append(wind_sims[idx])
         heading = wind_headings[idx]
         self.recovered_heading.append(heading)
 
-        # log the memory pointer before the update
-        # mem_pointer - upper can cause the calc_dists() to go out of bounds
+        # log the memory pointer/matched index before the update
         matched_idx = self.blimit + idx
         self.matched_index_log.append(matched_idx)
 
@@ -376,11 +384,12 @@ class Seq2SeqPerfectMemory(Navigator):
     
     def __init__(self, route_images, matcher='mae', deg_range=(-180, 180), degree_shift=1, 
                  w_thresh=None, mid_update=True, sma_size=3,
-                 window=20, dynamic_range=0.1, queue_size=3, **kwargs):
+                 window=20, dynamic_range=0.1, queue_size=3, sub_window=0, **kwargs):
         super().__init__(route_images, matcher=matcher, deg_range=deg_range, degree_shift=degree_shift, **kwargs)
         # current sequence params
         self.queue_size = queue_size
         self.queue = deque(maxlen=queue_size)
+        self.sub_window = sub_window
 
         # if the dot product distance is used we need to make sure the images are standardized
         if self.matcher == dot_dist:
@@ -445,6 +454,41 @@ class Seq2SeqPerfectMemory(Navigator):
         self.blimit = max(0, self.mem_pointer - self.lower)
         self.flimit = min(self.route_end, self.mem_pointer + self.upper)
 
+    # defines a reduced mem window from temp contrast
+    def mk_sub_window(self, query_seq):
+        # get temp contrasts difs (intensity wise)
+        # non abs so is independent from rotation
+        
+        # ims, qims, plot best cases to check
+        subw_ids, qr_sums = [], []
+        for wi in range(self.blimit,self.flimit-self.queue_size):
+            # qr_dif = np.array(self.route_images[wi:wi+self.queue_size]) - np.array(query_seq)
+            imseq = np.array(self.route_images[wi:wi+self.queue_size])
+            ims = imseq[:-1] - imseq[1:]
+            # ims = self.route_images[wi:wi+self.queue_size-1] - self.route_images[wi+1:wi+self.queue_size]
+            pims = np.where(ims>0,1,0)
+            nims = np.where(ims<0,-1,0)
+            ii = pims.sum(axis=0) + nims.sum(axis=0)
+            qimseq = np.array(query_seq)
+            qims = qimseq[:-1] - qimseq[1:]
+            qims[qims<0] = -1
+            qims[qims>0] = 1
+            qii = qims.sum(axis=0)
+            qr_dif = ii - qii
+            # subw_ids.append((wi,wi+self.queue_size))
+            # Take the sum of diffs
+            qr_sums.append(np.sum(qr_dif))
+        # more similar changing coef
+        #qr_min = np.min(np.abs(qr_sums))
+        qr_id = np.argmin(np.abs(qr_sums))
+        # subw_blim, subw_flim = subw_ids[qr_id]
+        # update pointer and (sub-) window
+        # self.mem_pointer = subw_blim + qr_id
+        self.mem_pointer = self.blimit + qr_id + int(self.queue_size/2) + 1
+        self.blimit = max(1, self.mem_pointer - round(self.sub_window/2))
+        self.flimit = min(self.mem_pointer + round(self.sub_window/2) + 1, self.route_end)
+        # import pdb; pdb.set_trace()
+
     def get_heading(self, query_img):
         '''
         Recover the heading given a query image
@@ -455,6 +499,11 @@ class Seq2SeqPerfectMemory(Navigator):
         #If the query images queue is full then remove the oldest element 
         # and add the new image (removal happes automaticaly when using the maxlen argument for the deque)
         self.queue.append(query_img)
+
+        if len(self.queue) == self.queue_size and self.sub_window:
+            #TODO use the param from the class
+            self.mk_sub_window(self.queue)
+
         # get the rotational similarities between the query images and a window of route images
         wrsims = seq2seqrmf(self.queue, self.route_images[self.blimit:self.flimit], self.matcher, self.deg_range, self.deg_step)
         
@@ -477,13 +526,16 @@ class Seq2SeqPerfectMemory(Navigator):
         # find best image match and heading
         # the index needs to be modulo the size of the window 
         # because now the window sims are the size of current queque * window 
-        idx = int(self.argminmax(wind_sims) % self.window)
+        idx = int(self.argminmax(wind_sims))
         self.best_sims.append(wind_sims[idx])
         heading = wind_headings[idx]
         self.recovered_heading.append(heading)
+        # rotate the query image to the recoverd heading
+        # self.queue[-1] = rotate(heading, self.queue[-1])
 
         # log the memory pointer before the update
         # mem_pointer - upper can cause the calc_dists() to go out of bounds
+        idx = idx % (self.flimit - self.blimit)
         matched_idx = self.blimit + idx
         self.matched_index_log.append(matched_idx)
 
@@ -492,10 +544,14 @@ class Seq2SeqPerfectMemory(Navigator):
             # TODO here I need to make the updating function modular
             self.dynamic_window_log_rate(best)
             self.check_w_size()
+        
+        # self.update_mid_pointer(idx)
+        if self.sub_window and len(self.queue) == self.queue_size:
+            self.reset_window(self.mem_pointer+idx)
+            # self.reset_window(matched_idx)
+        else:
+            self.update_mid_pointer(idx)
 
-
-        # Update memory pointer
-        self.update_mid_pointer(idx)
         return heading
 
     def update_pointer(self, idx):
@@ -699,6 +755,6 @@ class Seq2SeqPerfectMemory(Navigator):
 
     def get_name(self):
         if self.adaptive:
-            return f's2sA-SMW({self.starting_window})'
+            return f's2sA-SMW({self.starting_window}, {self.sub_window})'
         else:
-            return f's2sSMW({self.window})'
+            return f's2sSMW({self.window}, {self.sub_window})'
